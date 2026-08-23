@@ -71,7 +71,19 @@ protected:
     }
 };
 
-/* 테스트 케이스 1: 보행자 가중치가 긴급 제동을 유발하는지 검증 [SRS-AEB-305, 401] */
+/**
+ * @brief 보행자 가중치가 긴급 제동을 유발하는지 검증
+ *
+ * 18m / -36km/h -> 기본 TTC 1.8초(미제동). 보행자 감지로 x0.8 -> 1.44초.
+ * 임계값 1.5초를 역전하여 제동이 발동해야 한다.
+ *
+ * @verifies SRS-AEB-305
+ * @verifies SRS-AEB-401
+ * @verifies SRS-AEB-301
+ *
+ * @note 현재 실패한다. Aeb_FusionEngine.c 가 GetCameraTarget() 을 호출하지 않아
+ *       아래 EXPECT_CALL 이 충족되지 않는다. 의도적 보존 (REVIEW.md D-1).
+ */
 TEST_F(AebFusionEngineTest, PedestrianWeight_TriggersEmergencyBrake) {
     TargetObject mockTarget = { 18.0F, -36.0F, TRUE }; // 기본 TTC = 1.8초
     
@@ -90,7 +102,14 @@ TEST_F(AebFusionEngineTest, PedestrianWeight_TriggersEmergencyBrake) {
     EXPECT_FLOAT_EQ(context.CalculatedTTC, 1.44F);
 }
 
-/* 테스트 케이스 2: 보행자가 없을 경우 제동 미발생 검증 */
+/**
+ * @brief 대조군 — 보행자가 없으면 TTC 1.8초로 제동하지 않아야 한다
+ *
+ * @verifies SRS-AEB-402
+ * @verifies SRS-AEB-305
+ *
+ * @note 현재 실패한다. 사유는 위 케이스와 동일 (REVIEW.md D-1).
+ */
 TEST_F(AebFusionEngineTest, NoPedestrian_TtcAboveThreshold_ReleasesBrake) {
     TargetObject mockTarget = { 18.0F, -36.0F, TRUE }; // 기본 TTC = 1.8초
     
@@ -107,7 +126,16 @@ TEST_F(AebFusionEngineTest, NoPedestrian_TtcAboveThreshold_ReleasesBrake) {
     EXPECT_FLOAT_EQ(context.CalculatedTTC, 1.8F);
 }
 
-/* 테스트 케이스 3: 0으로 나누기 예외 방어 [SRS-AEB-302] */
+/**
+ * @brief 0으로 나누기 예외 방어
+ *
+ * @verifies SRS-AEB-302
+ * @verifies SRS-AEB-304
+ *
+ * @note 주입값 -0.001km/h 는 상위 가드(-0.5km/h)에서 이미 걸러지므로
+ *       의도한 Epsilon 방어(SRS-AEB-306)를 실제로는 검증하지 않는다.
+ *       통과하지만 가짜 통과다 (REVIEW.md D-2).
+ */
 TEST_F(AebFusionEngineTest, CalculateTTC_DivideByZero_Prevention) {
     TargetObject mockTarget = { 10.0F, -0.001F, TRUE }; // 속도가 0에 근접
     
@@ -124,7 +152,14 @@ TEST_F(AebFusionEngineTest, CalculateTTC_DivideByZero_Prevention) {
     EXPECT_FLOAT_EQ(context.CalculatedTTC, 999.0F);
 }
 
-/* 테스트 케이스 4: 널 포인터 주입 시 크래시 방어 */
+/**
+ * @brief 널 포인터 주입 시 크래시 방어
+ *
+ * @verifies SRS-AEB-205
+ * @verifies SRS-AEB-206
+ *
+ * @note 두 요구사항은 아직 승인되지 않은 제안 상태다. 즉 고아 테스트다.
+ */
 TEST_F(AebFusionEngineTest, NullPointer_Injection_NoCrash) {
     // 함수 포인터를 고의로 파괴
     radarInterface.GetSensorStatus = nullptr;
