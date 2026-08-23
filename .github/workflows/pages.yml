@@ -1,0 +1,111 @@
+# =============================================================================
+#  소스 코드 인덱스 사이트 배포 (Doxygen + 안정 링크 리다이렉트)
+#
+#  목적: SDD / Codebeamer 요구사항 항목에서 코드로 걸 '안 끊어지는 링크' 제공
+#    https://cnbissolution.github.io/cb_ai/sym/<경로>/<심볼>/
+#    https://cnbissolution.github.io/cb_ai/req/<요구사항ID>/
+#
+#  라인 번호가 바뀌면 이 워크플로가 인덱스를 다시 계산하므로,
+#  ALM 에 저장한 URL 은 수정하지 않아도 계속 유효하다.
+# =============================================================================
+name: Code Index Pages
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'docs/**'
+      - 'Doxyfile'
+      - 'scripts/build_symbol_map.py'
+      - 'scripts/generate_redirects.py'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+env:
+  SYMLINK_REPO: cnbissolution/cb_ai
+  SYMLINK_BRANCH: main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 도구 설치 (doxygen, graphviz, universal-ctags)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz universal-ctags
+
+      - name: 1. Doxygen 사이트 빌드
+        run: |
+          doxygen Doxyfile
+          test -d docs_build/html || { echo "::error::Doxygen 출력이 없다"; exit 1; }
+
+      - name: 2. 심볼 인덱스 생성 (@req / @verifies 파싱)
+        run: |
+          python3 scripts/build_symbol_map.py
+          echo "---- req_index.json ----"
+          cat req_index.json
+
+      - name: 3. 안정 링크 리다이렉트 페이지 생성
+        run: |
+          python3 scripts/generate_redirects.py
+          echo "---- sym/ 샘플 ----"
+          find docs_build/html/sym -name index.html | head -10
+          echo "---- req/ 목록 ----"
+          find docs_build/html/req -maxdepth 1 -mindepth 1 -type d -printf '%f\n' | sort
+
+      - name: 4. 추적성 갭 요약 (로그에 노출)
+        run: |
+          python3 - <<'PY'
+          import json
+          req = json.load(open("req_index.json", encoding="utf-8"))
+          gaps = []
+          for rid, entries in sorted(req.items()):
+              impl = [e for e in entries if e["kind"] in ("req", "satisfies")]
+              ver  = [e for e in entries if e["kind"] == "verifies"]
+              if impl and not ver:
+                  gaps.append((rid, "검증 없음"))
+              elif ver and not impl:
+                  gaps.append((rid, "고아 테스트"))
+          print(f"요구사항 {len(req)}건 인덱싱, 갭 {len(gaps)}건")
+          for rid, kind in gaps:
+              print(f"::warning title=추적성 갭::{rid} - {kind}")
+          PY
+
+      - name: 인덱스 산출물 아카이브
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-index
+          path: |
+            redirects_generated.json
+            req_index.json
+            docs/generated/CODE_INDEX.md
+
+      - name: Pages 아티팩트 업로드
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs_build/html
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: GitHub Pages 배포
+        id: deployment
+        uses: actions/deploy-pages@v4

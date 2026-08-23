@@ -1,0 +1,68 @@
+# =============================================================================
+#  AEB PoC — Doxygen 설정
+#
+#  용도: 소스 브라우저(라인 앵커 포함) + 호출 그래프 생성.
+#        GitHub Pages 로 배포되어 SDD/요구사항에서 코드로 링크하는 근거가 된다.
+#  실행: doxygen Doxyfile   ->  docs_build/html/
+# =============================================================================
+
+# ---- 기본 ----
+PROJECT_NAME           = "AEB PoC — AI RM DevOps CI/CD/CT"
+PROJECT_BRIEF          = "ASPICE V-모델 데모: 요구사항-코드-시험 추적성"
+OUTPUT_DIRECTORY       = docs_build
+CREATE_SUBDIRS         = NO
+OUTPUT_LANGUAGE        = Korean
+
+# ---- 입력 ----
+INPUT                  = src test docs
+FILE_PATTERNS          = *.c *.h *.cpp *.hpp *.py *.md
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       = */.git/* */.github/* docs_build/* build/* \
+                         */__pycache__/* */_archive/* */generated/*
+USE_MDFILE_AS_MAINPAGE = docs/SDD_AEB_Design.md
+
+# ---- 파싱 ----
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_METHODS  = YES
+OPTIMIZE_OUTPUT_FOR_C  = YES
+JAVADOC_AUTOBRIEF      = YES
+MULTILINE_CPP_IS_BRIEF = YES
+
+# ---- 추적성 커스텀 태그 ----
+# 소스의 @req / @verifies / @satisfies 를 문서에 별도 섹션으로 렌더링한다.
+# scripts/build_symbol_map.py 가 파싱하는 것과 동일한 태그다.
+ALIASES               += "req=@xrefitem reqlist \"구현 요구사항\" \"요구사항 추적: 구현\""
+ALIASES               += "verifies=@xrefitem verlist \"검증 요구사항\" \"요구사항 추적: 검증\""
+ALIASES               += "satisfies=@xrefitem satlist \"충족 요구사항\" \"요구사항 추적: 충족\""
+
+# ---- 전처리 ----
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+
+# ---- HTML ----
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_TREEVIEW      = YES
+FULL_PATH_NAMES        = NO
+GENERATE_LATEX         = NO
+
+# ---- 소스 브라우저 (라인 앵커: Aeb__FusionEngine_8c_source.html#l00050) ----
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+VERBATIM_HEADERS       = YES
+
+# ---- 다이어그램 ----
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+
+# ---- 경고 ----
+QUIET                  = NO
+WARN_IF_UNDOCUMENTED   = NO
