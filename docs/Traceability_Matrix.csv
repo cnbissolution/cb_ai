@@ -1,18 +1,20 @@
-﻿Req ID,Implemented Function,Source File:Line,Code Snippet / Condition,Test Case (SWE.4),Test File,Coverage Type,Status
-SRS-AEB-101,Aeb_Init(),src/Aeb_FusionEngine.c:15-17,context->Radar/Camera/Brake = ...,(전 SIL 케이스 fixture 에서 간접 실행),test/test_functional_scenario.py,Statement,부분 커버
-SRS-AEB-102,Aeb_Init(),src/Aeb_FusionEngine.c:18,context->IsSystemFault = FALSE,test_initial_state_is_safe,test/test_functional_scenario.py,Statement,커버
-SRS-AEB-103,Aeb_Init(),src/Aeb_FusionEngine.c:19,context->CalculatedTTC = AEB_TTC_SAFE_DEFAULT,test_initial_state_is_safe,test/test_functional_scenario.py,Statement,커버
-SRS-AEB-201,Aeb_MainFunction_10ms(),src/Aeb_FusionEngine.c:43,함수명/아키텍처 레벨 (OS 스케줄러 10ms 태스크),(정적 검토),-,-,코드로 검증 불가 (설계 리뷰 대상)
-SRS-AEB-202,Aeb_MainFunction_10ms(),src/Aeb_FusionEngine.c:58,sensorStatus = context->Radar->GetSensorStatus(),전 케이스 공통 / test_functional_scenario_sensor_fault_failsafe,test/test_Aeb_FusionEngine.cpp + test/test_functional_scenario.py,Statement,커버
-SRS-AEB-203,Aeb_MainFunction_10ms(),src/Aeb_FusionEngine.c:62,context->IsSystemFault = TRUE,test_functional_scenario_sensor_fault_failsafe,test/test_functional_scenario.py,Branch,커버 (SIL 결함 주입으로 해소)
-SRS-AEB-204,Aeb_MainFunction_10ms(),src/Aeb_FusionEngine.c:62-67,ReleaseBrake() 후 return (Fail-Safe),test_functional_scenario_sensor_fault_failsafe,test/test_functional_scenario.py,Branch,커버 (SIL 결함 주입으로 해소)
-SRS-AEB-301,Aeb_MainFunction_10ms(),src/Aeb_FusionEngine.c:71,context->Radar->GetRadarTarget(&radarTarget),PedestrianWeight_TriggersEmergencyBrake,test/test_Aeb_FusionEngine.cpp,Statement,부분 커버 - 카메라 타겟 수집 미구현 (REVIEW.md D-1)
-SRS-AEB-302,CalculateTTC(),src/Aeb_FusionEngine.c:30,(target->IsValid == TRUE) && (RelativeSpeed_Kmph < -0.5F),test_functional_scenario_target_receding_no_braking / test_functional_scenario_invalid_target_no_braking,test/test_functional_scenario.py,Branch (MC/DC 미달),커버 (T/F 양측)
-SRS-AEB-303,CalculateTTC(),src/Aeb_FusionEngine.c:35,ttc = target->Distance_M / relSpeed_Mps,test_functional_scenario_emergency_braking,test/test_functional_scenario.py,Statement,커버
-SRS-AEB-304,CalculateTTC(),"src/Aeb_FusionEngine.c:26,39",ttc = AEB_TTC_SAFE_DEFAULT; return ttc,test_functional_scenario_target_receding_no_braking,test/test_functional_scenario.py,Branch,커버
-SRS-AEB-305,Aeb_MainFunction_10ms(),src/Aeb_FusionEngine.c:78-83,CalculatedTTC *= AEB_PEDESTRIAN_WEIGHT,test_functional_scenario_pedestrian_weight_advances_braking,test/test_Aeb_FusionEngine.cpp + test/test_functional_scenario.py,Branch (T/F 양측),커버
-SRS-AEB-401,Aeb_MainFunction_10ms(),src/Aeb_FusionEngine.c:86-89,if (CalculatedTTC < AEB_TTC_CRITICAL_SEC) ApplyEmergencyBrake(100.0F),test_functional_scenario_emergency_braking,test/test_Aeb_FusionEngine.cpp + test/test_functional_scenario.py,Branch,커버
-SRS-AEB-402,Aeb_MainFunction_10ms(),src/Aeb_FusionEngine.c:91-93,else { ReleaseBrake(); },NoPedestrian_TtcAboveThreshold_ReleasesBrake,test/test_Aeb_FusionEngine.cpp + test/test_functional_scenario.py,Branch,커버
-"SRS-AEB-205 (제안)",Aeb_MainFunction_10ms(),src/Aeb_FusionEngine.c:54-57,context/Radar/Camera/Brake NULL 체크,NullPointer_Injection_NoCrash,test/test_Aeb_FusionEngine.cpp,Branch,고아 테스트 (요구사항 미승인)
-"SRS-AEB-206 (제안)",전 함수,"src/Aeb_FusionEngine.c:57,63,70,77,87,91",함수 포인터 != NULL_PTR 가드,NullPointer_Injection_NoCrash,test/test_Aeb_FusionEngine.cpp,Branch,고아 테스트 (요구사항 미승인)
-"SRS-AEB-306 (보류)",CalculateTTC(),src/Aeb_FusionEngine.c:34,if (relSpeed_Mps > AEB_REL_SPEED_EPSILON_MPS),(도달 불가 - 실측 확인),docs/evidence/d2_dead_branch_probe.py,Dead Branch,DEFECT: SRS-302 가드로 인해 else 경로 도달 불가 (REVIEW.md D-2)
+﻿# Base URL,https://cnbissolution.github.io/cb_ai,,,,,,
+# Requirement Link 컬럼은 Base URL 기준 상대 경로다,,,,,,,
+Req ID,Type,ASIL,Verification Method,Requirement Link (relative),Implementation Symbols,Verification Symbols,Status
+SRS-AEB-101,Functional,QM,Unit Test,req/SRS-AEB-101/,Aeb_Init,(없음),부분 커버 — 초기화 검증 전용 테스트 없음
+SRS-AEB-102,Functional,QM,Unit Test,req/SRS-AEB-102/,Aeb_Init,test_initial_state_is_safe / test_functional_scenario_emergency_braking,커버
+SRS-AEB-103,Functional,QM,Unit Test,req/SRS-AEB-103/,Aeb_Init,test_initial_state_is_safe / test_functional_scenario_emergency_braking,커버
+SRS-AEB-201,Constraint,ASIL-D,Integration / Timing,req/SRS-AEB-201/,Aeb_MainFunction_10ms,(없음),코드로 검증 불가 (설계 리뷰 대상)
+SRS-AEB-202,Safety,ASIL-D,Unit Test,req/SRS-AEB-202/,Aeb_MainFunction_10ms,test_functional_scenario_sensor_fault_failsafe,커버
+SRS-AEB-203,Safety,ASIL-D,Fault Injection,req/SRS-AEB-203/,Aeb_MainFunction_10ms,test_functional_scenario_sensor_fault_failsafe,커버 (SIL 결함 주입)
+SRS-AEB-204,Safety,ASIL-D,Fault Injection,req/SRS-AEB-204/,Aeb_MainFunction_10ms,test_functional_scenario_sensor_fault_failsafe,커버 (SIL 결함 주입)
+SRS-AEB-205,Safety,ASIL-D,Fault Injection,req/SRS-AEB-205/,(없음),NullPointer_Injection_NoCrash,고아 테스트 — 요구사항 미승인 (제안)
+SRS-AEB-206,Safety,ASIL-D,Fault Injection,req/SRS-AEB-206/,(없음),NullPointer_Injection_NoCrash,고아 테스트 — 요구사항 미승인 (제안)
+SRS-AEB-301,Functional,ASIL-B,Unit Test,req/SRS-AEB-301/,Aeb_MainFunction_10ms,PedestrianWeight_TriggersEmergencyBrake,부분 커버 — 카메라 타겟 수집 미구현 (D-1)
+SRS-AEB-302,Functional,ASIL-D,Boundary Value,req/SRS-AEB-302/,CalculateTTC,CalculateTTC_DivideByZero_Prevention / test_functional_scenario_target_receding_no_braking / test_functional_scenario_invalid_target_no_braking,커버 (T/F 양측)
+SRS-AEB-303,Functional,ASIL-D,Unit Test,req/SRS-AEB-303/,CalculateTTC,test_functional_scenario_emergency_braking,커버
+SRS-AEB-304,Functional,ASIL-D,Equivalence,req/SRS-AEB-304/,CalculateTTC,CalculateTTC_DivideByZero_Prevention / test_functional_scenario_target_receding_no_braking / test_functional_scenario_invalid_target_no_braking,커버
+SRS-AEB-305,Functional,ASIL-A,Equivalence,req/SRS-AEB-305/,Aeb_MainFunction_10ms,PedestrianWeight_TriggersEmergencyBrake / NoPedestrian_TtcAboveThreshold_ReleasesBrake / test_functional_scenario_pedestrian_weight_advances_braking,커버
+SRS-AEB-306,Functional,ASIL-D,Boundary Value,req/SRS-AEB-306/,CalculateTTC,(없음),DEFECT: 도달 불가 — 검증 불가 (D-2)
+SRS-AEB-401,Safety,ASIL-D,Boundary Value,req/SRS-AEB-401/,Aeb_MainFunction_10ms,PedestrianWeight_TriggersEmergencyBrake / test_functional_scenario_emergency_braking,커버
+SRS-AEB-402,Safety,ASIL-D,Unit Test,req/SRS-AEB-402/,Aeb_MainFunction_10ms,NoPedestrian_TtcAboveThreshold_ReleasesBrake / test_functional_scenario_emergency_braking,커버
