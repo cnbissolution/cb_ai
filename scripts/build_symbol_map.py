@@ -284,6 +284,7 @@ def render_index(rows, req_index):
         "> 저장소에 커밋된 파일은 스냅샷이다. 최신본은 CI 아티팩트(`code-index`)와 GitHub Pages 를 보라.",
         "",
         "- 대상: `%s` @ `%s`" % (REPO, BRANCH),
+        "- **Base URL**: %s — 아래 링크는 이 주소 기준 상대 경로다." % base,
         "- 안정 링크 형식: `%s/sym/<경로>/<심볼>/`" % base,
         "- 요구사항 링크 형식: `%s/req/<요구사항ID>/`" % base,
         "",
@@ -295,9 +296,8 @@ def render_index(rows, req_index):
     for rid in sorted(req_index):
         for e in req_index[rid]:
             rel_kind = {"req": "구현", "verifies": "검증", "satisfies": "충족"}.get(e["kind"], e["kind"])
-            out.append("| `%s` | %s | `%s` | [%s:%d-%d](%s) | [%s](%s/%s/) |"
-                       % (rid, rel_kind, e["symbol"], e["file"], e["start"], e["end"],
-                          e["url"], e["sym_path"], base, e["sym_path"]))
+            out.append("| `%s` | %s | `%s` | %s:%d-%d | `req/%s/` |"
+                       % (rid, rel_kind, e["symbol"], e["file"], e["start"], e["end"], rid))
     if not req_index:
         out.append("| (없음) | | | | |")
 
@@ -321,10 +321,10 @@ def render_index(rows, req_index):
     out += ["", "## 3. 전체 심볼", "",
             "| 파일 | 심볼 | 라인 | 요구사항 | 안정 링크 |", "|---|---|---|---|---|"]
     for r in sorted(rows, key=lambda x: (x["file"], x["start"])):
-        out.append("| `%s` | `%s` | [%d-%d](%s) | %s | [%s](%s/%s/) |"
-                   % (r["file"], r["symbol"], r["start"], r["end"], r["url"],
+        out.append("| `%s` | `%s` | %d-%d | %s | `%s/` |"
+                   % (r["file"], r["symbol"], r["start"], r["end"],
                       ", ".join("`%s`" % x for x in r["reqs"]) or "-",
-                      r["sym_path"], base, r["sym_path"]))
+                      r["sym_path"]))
     out.append("")
     return "\n".join(out)
 
