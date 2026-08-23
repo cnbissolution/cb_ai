@@ -1,0 +1,26 @@
+# 빌드 산출물
+build/
+*.o
+*.so
+*.dll
+*.gcno
+*.gcda
+unit_test
+unit_test.exe
+
+# 시험/커버리지 리포트
+unit_report.xml
+functional_report.xml
+coverage_report.xml
+coverage_report.html
+*.gcov
+
+# Python
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Gemini 원본 대화록 보관 폴더 — 절대 커밋하지 말 것.
+# mhtml 저장 시 좌측 사이드바가 함께 캡처되어 개인 메일주소, 메일 백업 파일명,
+# 고객사/제안서 파일명, 무관한 개인 대화 목록이 포함되어 있다.
+_archive/
