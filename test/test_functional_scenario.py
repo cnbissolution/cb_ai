@@ -79,7 +79,11 @@ def _run_cycles(count=CYCLE_COUNT_100MS):
 
 
 def test_initial_state_is_safe():
-    """[SRS-AEB-103] 초기 상태에서 TTC 는 안전 기본값이고 제동 명령이 없어야 한다."""
+    """초기 상태에서 TTC 는 안전 기본값이고 제동 명령이 없어야 한다.
+
+    @verifies SRS-AEB-102
+    @verifies SRS-AEB-103
+    """
     assert aeb.GetCalculatedTTC() == pytest.approx(999.0)
     assert aeb.GetBrakeCommand() == pytest.approx(0.0)
     assert aeb.GetSystemFaultFlag() == FALSE
@@ -87,7 +91,11 @@ def test_initial_state_is_safe():
 
 def test_functional_scenario_emergency_braking():
     """
-    [SRS-AEB-303, SRS-AEB-401, SRS-AEB-402] 시계열 접근 시나리오
+    시계열 접근 시나리오
+
+    @verifies SRS-AEB-303
+    @verifies SRS-AEB-401
+    @verifies SRS-AEB-402
 
     [시나리오] 60km/h 주행 중 전방 정지 차량 발견 (상대속도 -60km/h = -16.667m/s)
       1. 초기 상태          : 타겟 없음        -> TTC 999.0s, 미제동
@@ -114,7 +122,9 @@ def test_functional_scenario_emergency_braking():
 
 def test_functional_scenario_pedestrian_weight_advances_braking():
     """
-    [SRS-AEB-305] 보행자 가중치가 제동 시점을 앞당기는지 시계열로 검증
+    보행자 가중치가 제동 시점을 앞당기는지 시계열로 검증
+
+    @verifies SRS-AEB-305
 
     동일한 18m / -36km/h(-10m/s) 조건에서
       - 보행자 미감지: TTC 1.8s  -> 미제동
@@ -135,7 +145,11 @@ def test_functional_scenario_pedestrian_weight_advances_braking():
 
 def test_functional_scenario_sensor_fault_failsafe():
     """
-    [SRS-AEB-202, SRS-AEB-203, SRS-AEB-204] 주행 중 센서 결함 발생 시 페일세이프
+    주행 중 센서 결함 발생 시 페일세이프
+
+    @verifies SRS-AEB-202
+    @verifies SRS-AEB-203
+    @verifies SRS-AEB-204
 
     긴급 제동 중이던 상황에서 레이더 결함(0x01)이 발생하면
     결함 플래그가 설정되고 제동이 해제되어야 한다.
@@ -154,7 +168,11 @@ def test_functional_scenario_sensor_fault_failsafe():
 
 
 def test_functional_scenario_target_receding_no_braking():
-    """[SRS-AEB-302, SRS-AEB-304] 멀어지는 타겟은 TTC 계산 대상이 아니다."""
+    """멀어지는 타겟은 TTC 계산 대상이 아니다.
+
+    @verifies SRS-AEB-302
+    @verifies SRS-AEB-304
+    """
     aeb.SetMockRadarTarget(10.0, +20.0, TRUE)  # 양수 상대속도 = 멀어짐
     _run_cycles()
     assert aeb.GetCalculatedTTC() == pytest.approx(999.0)
@@ -162,7 +180,10 @@ def test_functional_scenario_target_receding_no_braking():
 
 
 def test_functional_scenario_invalid_target_no_braking():
-    """[SRS-AEB-302] IsValid=FALSE 인 타겟은 무시되어야 한다."""
+    """IsValid=FALSE 인 타겟은 무시되어야 한다.
+
+    @verifies SRS-AEB-302
+    """
     aeb.SetMockRadarTarget(5.0, -80.0, FALSE)  # 매우 위험해 보이지만 무효 데이터
     _run_cycles()
     assert aeb.GetCalculatedTTC() == pytest.approx(999.0)
