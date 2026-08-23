@@ -1,0 +1,175 @@
+# =============================================================================
+#  AEB CI/CD/CT Pipeline  (Jenkins 대체)
+#
+#  트리거 4종:
+#    1. push / pull_request        : 개발자 코드 변경 (일반 CI)
+#    2. repository_dispatch        : Codebeamer 워크플로우가 촉발
+#                                    (scripts/cb_trigger_ci.py)
+#    3. workflow_dispatch          : 수동 실행 (데모 시연용)
+# =============================================================================
+name: AEB CI/CD/CT Pipeline
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # --- Codebeamer -> GitHub 트리거 (Jenkins 없이 ALM 주도 실행) ---
+  # Codebeamer 워크플로우 액션에서 scripts/cb_trigger_ci.py 호출 시 진입
+  repository_dispatch:
+    types: [ codebeamer-test-request, codebeamer-requirement-approved ]
+
+  workflow_dispatch:
+    inputs:
+      cb_item_id:
+        description: "결과를 연결할 Codebeamer 항목 ID (Bug/Test Case)"
+        required: false
+        default: ""
+
+env:
+  # 계측 오브젝트를 분리 배치하여 .gcda 파일명 충돌(카운터 오염) 방지
+  UNIT_BUILD_DIR: build/unit
+  SIL_BUILD_DIR: build/sil
+  COVERAGE_LINE_MIN: "80"
+  COVERAGE_BRANCH_MIN: "70"   # NOTE: 도달 불가 분기(REVIEW.md D-2) 존재로 100% 불가
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    # -------------------------------------------------------------------------
+    - name: 저장소 체크아웃
+      uses: actions/checkout@v4
+
+    - name: 트리거 컨텍스트 확인
+      id: ctx
+      run: |
+        echo "event=${{ github.event_name }}"
+        # Codebeamer 항목 ID 결정 우선순위:
+        #   repository_dispatch payload > workflow_dispatch input > 커밋 메시지 파싱
+        CB_ID="${{ github.event.client_payload.cb_item_id }}"
+        if [ -z "$CB_ID" ]; then CB_ID="${{ github.event.inputs.cb_item_id }}"; fi
+        if [ -z "$CB_ID" ]; then
+          # 커밋 메시지에서 "CB-12345" 또는 "#12345" 패턴 추출
+          CB_ID=$(git log -1 --pretty=%B | grep -oE '(CB-|#)[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+        fi
+        echo "cb_item_id=${CB_ID}" >> "$GITHUB_OUTPUT"
+        echo "연결 대상 Codebeamer 항목: ${CB_ID:-(없음)}"
+
+    - name: 의존성 설치 (GTest/GMock, gcovr, Python)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake gcovr \
+                                libgtest-dev libgmock-dev
+        python3 -m pip install --upgrade pip
+        python3 -m pip install pytest requests
+
+    # -------------------------------------------------------------------------
+    - name: 1. 빌드 및 Coverage Instrumentation
+      run: |
+        mkdir -p "$UNIT_BUILD_DIR" "$SIL_BUILD_DIR"
+
+        # (a) 기능 시험용 공유 라이브러리 (제어 로직 + SIL 하네스)
+        gcc --coverage -fPIC -Isrc -c src/Aeb_FusionEngine.c -o "$SIL_BUILD_DIR/Aeb_FusionEngine.o"
+        gcc --coverage -fPIC -Isrc -c test/Aeb_TestHarness.c -o "$SIL_BUILD_DIR/Aeb_TestHarness.o"
+        gcc --coverage -shared -o libaeb.so "$SIL_BUILD_DIR"/*.o
+
+        # (b) 단위 시험용 실행 파일 (gmock 주입)
+        gcc --coverage -Isrc -c src/Aeb_FusionEngine.c -o "$UNIT_BUILD_DIR/Aeb_FusionEngine.o"
+        g++ --coverage -Isrc -c test/test_Aeb_FusionEngine.cpp -o "$UNIT_BUILD_DIR/test_Aeb_FusionEngine.o"
+        g++ --coverage -o unit_test "$UNIT_BUILD_DIR"/*.o \
+            -lgtest -lgtest_main -lgmock -pthread
+
+    # -------------------------------------------------------------------------
+    # 시험 스텝은 continue-on-error 로 실행하여, 실패해도 커버리지 수집과
+    # Codebeamer 리포팅이 반드시 수행되도록 한다. 최종 판정은 마지막 게이트에서 한다.
+    - name: 2. 단위 시험 (Unit Test)
+      id: unit_test
+      continue-on-error: true
+      run: ./unit_test --gtest_output="xml:unit_report.xml"
+
+    - name: 3. 기능 시험 (Functional Test / SIL)
+      id: func_test
+      continue-on-error: true
+      env:
+        AEB_LIB_PATH: ${{ github.workspace }}/libaeb.so
+      run: pytest test/test_functional_scenario.py --junitxml=functional_report.xml
+
+    # -------------------------------------------------------------------------
+    - name: 4. Code Coverage 리포트 생성 (단위+기능 병합)
+      if: always()
+      run: |
+        # 두 빌드 디렉토리의 .gcda 를 모두 수집하여 소스 기준으로 병합
+        gcovr -r . --filter 'src/.*' \
+              --xml-pretty -o coverage_report.xml \
+              --html-details coverage_report.html \
+              --txt
+      # gcovr 은 build/unit, build/sil 양쪽 .gcda 를 소스 파일 단위로 합산한다
+
+    - name: 5. 커버리지 임계 게이트
+      id: cov_gate
+      if: always()
+      continue-on-error: true
+      run: |
+        gcovr -r . --filter 'src/.*' \
+              --fail-under-line "$COVERAGE_LINE_MIN" \
+              --fail-under-branch "$COVERAGE_BRANCH_MIN"
+
+    # -------------------------------------------------------------------------
+    - name: 6. Codebeamer 로 Test Run / 커버리지 전송
+      if: always()
+      env:
+        CB_URL: ${{ secrets.CB_URL }}
+        CB_TOKEN: ${{ secrets.CB_TOKEN }}
+        CB_TEST_RUN_TRACKER_ID: ${{ secrets.CB_TEST_RUN_TRACKER_ID }}
+        CB_TEST_CASE_TRACKER_ID: ${{ secrets.CB_TEST_CASE_TRACKER_ID }}
+      run: |
+        python3 scripts/upload_to_codebeamer.py \
+          --unit-report unit_report.xml \
+          --func-report functional_report.xml \
+          --coverage coverage_report.xml \
+          --build-ref "${{ github.run_id }}/${{ github.run_number }}" \
+          --commit "${{ github.sha }}"
+
+    - name: 7. 실패 시 AI 에이전트 원인 분석
+      if: |
+        always() && (
+          steps.unit_test.outcome == 'failure' ||
+          steps.func_test.outcome == 'failure' ||
+          steps.cov_gate.outcome == 'failure'
+        )
+      env:
+        CB_URL: ${{ secrets.CB_URL }}
+        CB_TOKEN: ${{ secrets.CB_TOKEN }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      run: |
+        python3 scripts/agentic_analyzer.py \
+          --test-report unit_report.xml \
+          --func-report functional_report.xml \
+          --coverage coverage_report.xml \
+          --source-dir src \
+          --item-id "${{ steps.ctx.outputs.cb_item_id }}" \
+          --build-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+    - name: 산출물 아카이브
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: aeb-test-evidence
+        path: |
+          unit_report.xml
+          functional_report.xml
+          coverage_report.xml
+          coverage_report.html
+
+    # -------------------------------------------------------------------------
+    - name: 8. 최종 판정 게이트
+      if: always()
+      run: |
+        FAILED=0
+        [ "${{ steps.unit_test.outcome }}" = "failure" ] && { echo "::error::단위 시험 실패"; FAILED=1; }
+        [ "${{ steps.func_test.outcome }}" = "failure" ] && { echo "::error::기능 시험 실패"; FAILED=1; }
+        [ "${{ steps.cov_gate.outcome }}"  = "failure" ] && { echo "::error::커버리지 임계 미달"; FAILED=1; }
+        exit $FAILED
