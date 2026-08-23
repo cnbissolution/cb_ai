@@ -1,0 +1,37 @@
+@startuml
+title AEB System Class Diagram (Static Structure)
+
+interface IRadarSensor {
+  + GetRadarTarget(out_target: TargetObject*)
+  + GetSensorStatus(): uint8
+}
+
+interface ICameraSensor {
+  + GetCameraTarget(out_target: TargetObject*)
+  + IsPedestrianDetected(): boolean
+}
+
+interface IBrakeActuator {
+  + ApplyEmergencyBrake(brakeForce_Pct: float32)
+  + ReleaseBrake()
+}
+
+class TargetObject {
+  + Distance_M: float32
+  + RelativeSpeed_Kmph: float32
+  + IsValid: boolean
+}
+
+class Aeb_SystemContext {
+  + IsSystemFault: boolean
+  + CalculatedTTC: float32
+  + Aeb_Init(...)
+  + Aeb_MainFunction_10ms()
+  - CalculateTTC(target: TargetObject*): float32
+}
+
+Aeb_SystemContext "1" o--> "1" IRadarSensor  : Uses
+Aeb_SystemContext "1" o--> "1" ICameraSensor : Uses
+Aeb_SystemContext "1" o--> "1" IBrakeActuator: Uses
+Aeb_SystemContext ..> TargetObject : Dependency
+@enduml

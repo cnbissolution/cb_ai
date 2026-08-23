@@ -1,0 +1,33 @@
+D-2 실측 검증: Epsilon 방어 로직 도달 불가(dead branch) 증명
+검증일: 2026-08-23
+대상  : src/Aeb_FusionEngine.c:30 (가드) vs :34 (epsilon 검사)
+환경  : x86_64-pc-cygwin-gcc 14, Python 3.14 + ctypes (SIL 하네스 경유)
+
+  relSpeed(km/h) |  relSpeed(m/s) |  TTC     | epsilon(0.01) 분기 진입?
+  ----------------------------------------------------------------------
+       -0.400000 |       0.111111 |  999.000 | 가드에서 차단
+       -0.490000 |       0.136111 |  999.000 | 가드에서 차단
+       -0.500000 |       0.138889 |  999.000 | 가드에서 차단
+       -0.500001 |       0.138889 |   72.000 | no (나눗셈 수행)
+       -0.510000 |       0.141667 |   70.588 | no (나눗셈 수행)
+       -0.600000 |       0.166667 |   60.000 | no (나눗셈 수행)
+       -1.000000 |       0.277778 |   36.000 | no (나눗셈 수행)
+       -3.600000 |       1.000000 |   10.000 | no (나눗셈 수행)
+      -36.000000 |      10.000000 |    1.000 | no (나눗셈 수행)
+
+  epsilon 임계값        : 0.01 m/s
+  가드 통과 최소 |m/s| : 0.138889  (= 0.5/3.6)
+  -> 가드를 통과한 모든 입력의 분모가 epsilon의 13.9배 이상
+  -> relSpeed_Mps > 0.01 은 항상 참. else 분기 도달 불가 (dead branch) 확정
+
+결론: 상위 가드 (RelativeSpeed_Kmph < -0.5F) 를 통과한 모든 입력에 대해
+      relSpeed_Mps >= 0.138889 이므로 (relSpeed_Mps > 0.01F) 는 항상 참이다.
+      -> else 경로 도달 불가 -> 브랜치 커버리지 100% 달성 불가
+      -> MISRA-C:2012 Rule 14.3 (불변 조건) 위배 소지
+
+재현 방법:
+  mkdir -p build
+  gcc -std=c99 -Isrc -c src/Aeb_FusionEngine.c -o build/Aeb_FusionEngine.o
+  gcc -std=c99 -Isrc -c test/Aeb_TestHarness.c  -o build/Aeb_TestHarness.o
+  gcc -shared -o libaeb.so build/*.o
+  AEB_LIB_PATH=./libaeb.so python3 docs/evidence/d2_dead_branch_probe.py

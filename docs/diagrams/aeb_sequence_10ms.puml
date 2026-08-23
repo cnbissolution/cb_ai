@@ -1,0 +1,52 @@
+@startuml
+title AEB 10ms Task Sequence Diagram (Dynamic Behavior)
+
+actor OS_Scheduler
+participant "context: Aeb_SystemContext" as AEB
+participant "Radar: IRadarSensor" as Radar
+participant "Camera: ICameraSensor" as Camera
+participant "Brake: IBrakeActuator" as Brake
+
+OS_Scheduler -> AEB: Aeb_MainFunction_10ms()
+activate AEB
+
+AEB -> Radar: GetSensorStatus()
+activate Radar
+Radar --> AEB: status (0x00)
+deactivate Radar
+
+AEB -> Radar: GetRadarTarget(&radarTarget)
+activate Radar
+Radar --> AEB: radarTarget data
+deactivate Radar
+
+AEB -> AEB: CalculateTTC(&radarTarget)
+activate AEB
+note right of AEB: target.Distance_M / relSpeed_Mps
+deactivate AEB
+
+AEB -> Camera: IsPedestrianDetected()
+activate Camera
+Camera --> AEB: TRUE / FALSE
+deactivate Camera
+
+alt CalculatedTTC < 1.5s
+  AEB -> Brake: ApplyEmergencyBrake(100.0)
+  activate Brake
+  Brake --> AEB: done
+  deactivate Brake
+else TTC >= 1.5s or No Target
+  AEB -> Brake: ReleaseBrake()
+  activate Brake
+  Brake --> AEB: done
+  deactivate Brake
+end
+
+deactivate AEB
+
+note over AEB
+  주의: Gemini 원본 시퀀스에는 GetCameraTarget() 호출이
+  포함되어 있었으나, 실제 Aeb_FusionEngine.c 에는 없음.
+  --> 코드 기준으로 정정한 버전 (REVIEW.md D-1 참조)
+end note
+@enduml

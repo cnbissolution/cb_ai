@@ -1,0 +1,13 @@
+D-1 실측 검증: 요구사항-코드 불일치 (카메라 타겟 미수집) 컴파일러 증거
+검증일: 2026-08-23
+
+$ gcc -std=c99 -Wall -Wextra -Isrc -c src/Aeb_FusionEngine.c
+src/Aeb_FusionEngine.c: In function 'Aeb_MainFunction_10ms':
+src/Aeb_FusionEngine.c:46:18: warning: unused variable 'cameraTarget' [-Wunused-variable]
+     TargetObject cameraTarget = {0.0F, 0.0F, FALSE};
+                  ^~~~~~~~~~~~
+
+해석: cameraTarget 변수가 선언만 되고 사용되지 않는다.
+      즉 ICameraSensor::GetCameraTarget() 이 호출되지 않는다.
+      SRS-AEB-301 은 '레이더와 카메라로부터 타겟 데이터를 수집'을 요구하므로
+      코드가 요구사항에 미달한 상태이며, 이를 기대하는 단위시험 2건이 실패한다.

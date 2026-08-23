@@ -1,0 +1,36 @@
+@startuml
+title Agentic AI Pipeline for Test Failure Analysis
+
+actor Developer
+participant "GitHub Actions" as CI
+participant "AI Agent\n(MCP Client)" as Agent
+participant "LLM\n(Claude Opus 5)" as LLM
+participant "Codebeamer\nREST API" as CB
+
+Developer -> CI: git push (Code Modified)
+activate CI
+
+CI -> CI: Build & Run Tests (Unit/SIL)
+alt Test Failed or Coverage < 80%
+    CI -> CI: Generate Failure Logs (XML/TXT)
+    CI -> Agent: Trigger AI Analysis Script
+    activate Agent
+
+    Agent -> Agent: Read Failed Tests & Source Code
+    Agent -> LLM: [Prompt] "Analyze this C code & GTest failure"
+    activate LLM
+    LLM --> Agent: Root Cause & Suggested Code Fix (JSON Schema)
+    deactivate LLM
+
+    Agent -> CB: POST /api/v3/items/{issue_id}/comments
+    activate CB
+    CB --> Agent: 201 Created
+    deactivate CB
+
+    Agent --> CI: AI Analysis Complete
+    deactivate Agent
+end
+
+CI --> Developer: Pipeline Failed (with AI hints in CB)
+deactivate CI
+@enduml
