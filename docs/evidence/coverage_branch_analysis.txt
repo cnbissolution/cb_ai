@@ -1,0 +1,74 @@
+브랜치 커버리지 미달 분석 — 63.89% 가 무엇으로 이루어져 있는가
+검증일: 2026-08-24
+대상  : src/Aeb_FusionEngine.c
+환경  : x86_64-pc-cygwin-gcc 14 --coverage, SIL 시나리오 6종 실행 후 gcov -b -c
+
+측정 결과
+---------
+  Lines executed        : 100.00%  (44행 중 44)
+  Branches executed     : 100.00%  (36개 중 36)   <- 모든 분기가 '평가'는 됨
+  Taken at least once   :  63.89%  (36개 중 23)   <- 실제 게이트 대상 지표
+  Calls executed        : 100.00%  (7개 중 7)
+
+  => gcovr --fail-under-branch 70 에서 exit 4 (브랜치 임계 미달)
+
+미실행 분기 13개 분류
+---------------------
+  라인   요구사항       분류                        코드
+  ------------------------------------------------------------------------
+  L78   SRS-AEB-205  컨텍스트/인터페이스 NULL 가드   if ((context == NULL_PTR) || ...
+  L78   SRS-AEB-205  컨텍스트/인터페이스 NULL 가드   if ((context == NULL_PTR) || ...
+  L79   SRS-AEB-205  컨텍스트/인터페이스 NULL 가드   (context->Camera == NULL_PTR) || ...
+  L79   SRS-AEB-205  컨텍스트/인터페이스 NULL 가드   (context->Camera == NULL_PTR) || ...
+  L20   SRS-AEB-206  포인터 NULL 가드              if (context != NULL_PTR) {
+  L41   SRS-AEB-206  포인터 NULL 가드              if (target != NULL_PTR) {
+  L84   SRS-AEB-206  함수 포인터 NULL 가드          if (context->Radar->GetSensorStatus != NULL_PTR)
+  L90   SRS-AEB-206  함수 포인터 NULL 가드          if (context->Brake->ReleaseBrake != NULL_PTR)
+  L97   SRS-AEB-206  함수 포인터 NULL 가드          if (context->Radar->GetRadarTarget != NULL_PTR)
+  L104  SRS-AEB-206  함수 포인터 NULL 가드          if (context->Camera->IsPedestrianDetected != NULL_PTR)
+  L114  SRS-AEB-206  함수 포인터 NULL 가드          if (context->Brake->ApplyEmergencyBrake != NULL_PTR)
+  L118  SRS-AEB-206  함수 포인터 NULL 가드          if (context->Brake->ReleaseBrake != NULL_PTR)
+  L49   SRS-AEB-306  도달 불가 (dead branch)      if (relSpeed_Mps > AEB_REL_SPEED_EPSILON_MPS)
+
+  요약
+    SRS-AEB-205 (제안, 미승인)  4개  - 컨텍스트/인터페이스 NULL 가드
+    SRS-AEB-206 (제안, 미승인)  8개  - 포인터 / 함수 포인터 NULL 가드
+    SRS-AEB-306 (보류, 도달불가) 1개  - Epsilon 방어
+
+해석 — 커버리지 미달은 부주의가 아니라 요구사항 문제다
+-----------------------------------------------------
+  미실행 분기 13개가 전부 이미 식별된 3개 요구사항으로 설명된다.
+  임의로 빠뜨린 테스트가 아니라, 다음 두 가지의 결과다.
+
+  1) 12개 (205/206) : 방어 코드는 구현되어 있으나 이를 요구하는 요구사항이
+     아직 승인되지 않았다. 그래서 결함 주입 테스트도 작성되지 않았다.
+     -> 요구사항을 승인하면 테스트를 붙일 수 있고 커버리지가 오른다.
+        (예상: 12개 확보 시 23+12=35/36 = 97.2%)
+
+  2)  1개 (306)     : 상위 가드(-0.5 km/h) 때문에 else 경로에 도달할 수 없다.
+     -> 테스트를 아무리 추가해도 이 분기는 못 잡는다. 코드를 고쳐야 한다.
+        즉 브랜치 100% 는 현재 코드로는 원천적으로 불가능하다.
+        상세: d2_dead_branch_probe.txt
+
+  gcov 가 d2_dead_branch_probe.py 의 스윙 분석과 독립적으로 같은 결론에 도달했다.
+  (L49 branch 1 taken 0 — 도구가 직접 '이 분기는 한 번도 안 잡혔다'고 보고)
+
+임계값 설정 근거
+----------------
+  COVERAGE_BRANCH_MIN = 70 은 유지한다.
+  63.89% 는 이 값을 실제로 미달하며, 게이트가 의도대로 동작하고 있다.
+  요구사항 205/206 승인 및 결함 주입 테스트 추가 후 재평가할 것.
+  단, 306 이 남아 있는 한 100% 는 설정하면 안 된다.
+
+  참고: CI 는 단위시험 + 기능시험 커버리지를 병합하므로 위 63.89% 보다 높다.
+        (NullPointer_Injection_NoCrash 가 L84 분기를 일부 잡는다)
+        그럼에도 CI 게이트가 exit 4 로 실패했으므로 CI 수치도 70% 미만이다.
+
+재현 방법
+---------
+  mkdir -p build/cov
+  gcc -std=c99 --coverage -Isrc -c src/Aeb_FusionEngine.c -o build/cov/Aeb_FusionEngine.o
+  gcc -std=c99 --coverage -Isrc -c test/Aeb_TestHarness.c -o build/cov/Aeb_TestHarness.o
+  # SIL 시나리오를 호출하는 드라이버를 링크해 실행한 뒤
+  gcov -b -c -o build/cov src/Aeb_FusionEngine.c
+  grep -B1 "taken 0" Aeb_FusionEngine.c.gcov
