@@ -17,12 +17,24 @@ Test Run 을 생성하고 Test Case 항목과 연결하여 추적성을 확보�
   CB_TOKEN                  Personal Access Token (권장)
   CB_USER / CB_PASS         Basic 인증 (CB_TOKEN 미설정 시 대체)
   CB_TEST_RUN_TRACKER_ID    Test Run 트래커 ID
-  CB_TEST_CASE_TRACKER_ID   Test Case 트래커 ID (테스트명 -> 항목 매칭용, 선택)
+  CB_TEST_CASE_TRACKER_ID   Test Case 트래커 ID (필수 - 아래 참조)
 
-주의:
-  Test Run 생성은 일반 항목 생성 엔드포인트(/trackers/{id}/items)가 아니라
-  테스트 실행 전용 엔드포인트를 사용해야 한다. CI 자동화 결과는
-  /trackers/{testRunTrackerId}/automatedtestruns 가 정확한 대상이다.
+엔드포인트:
+  Test Run 생성은 일반 항목 생성(/trackers/{id}/items)이 아니라 테스트 실행 전용
+  엔드포인트를 쓴다. CI 자동화 결과는 /trackers/{id}/automatedtestruns 가 대상이다.
+
+필드 매핑 (실측 스키마 기준, Automotive Template 3.0 tracker 123469):
+  status     워크플로 상태  Unset / In progress / Suspended / Finished / Closed / ...
+  result     시험 결과      Unset / Passed / Failed / Blocked / Partly Passed / ...
+  build      빌드 식별자    전용 TextField
+  testCases  Test Case 표   **필수 필드** - 매칭되는 Test Case 없이는 생성 거부됨
+
+  Passed/Failed 는 result 로 보내야 한다. status 에는 그런 옵션이 없다.
+  이 때문에 CB_TEST_CASE_TRACKER_ID 는 선택이 아니라 사실상 필수다.
+
+전송 전 확인:
+  python3 scripts/upload_to_codebeamer.py --check-schema
+  대상 인스턴스의 실제 옵션 이름과 대조한다 (다국어 인스턴스는 로컬라이즈됨).
 """
 from __future__ import annotations
 
@@ -39,11 +51,22 @@ from urllib3.util.retry import Retry
 
 TIMEOUT = 30
 
-# Codebeamer Test Run 상태값. 인스턴스의 Test Run 트래커 워크플로우에 정의된
-# 상태 이름과 일치해야 한다. (다국어 인스턴스에서는 로컬라이즈된 이름일 수 있음)
-STATUS_PASSED = "Passed"
-STATUS_FAILED = "Failed"
-STATUS_BLOCKED = "Blocked"
+# Codebeamer Test Run 트래커는 '상태(Status)'와 '결과(Result)'가 별개 필드다.
+# 실측 스키마(Automotive Template 3.0, tracker 123469) 기준:
+#   Status (id 7)  : Unset / In progress / Suspended / Finished / Closed /
+#                    To be approved / Ready for execution / Rejected
+#   Result (id 15) : Unset / Passed / Failed / Blocked / Partly Passed /
+#                    Not Applicable / NOT RUN YET
+# Passed/Failed 를 Status 에 보내면 유효한 옵션이 아니라 거부된다.
+RESULT_PASSED = "Passed"
+RESULT_FAILED = "Failed"
+RESULT_BLOCKED = "Blocked"
+
+# 자동화 실행이 끝난 Test Run 의 워크플로 상태
+RUN_STATUS_DONE = "Finished"
+
+# 다국어 인스턴스는 옵션 이름이 로컬라이즈될 수 있다.
+# --check-schema 로 실제 옵션 이름을 먼저 확인할 것.
 
 
 @dataclass
@@ -62,11 +85,12 @@ class Suite:
 
     @property
     def failed(self) -> int:
-        return sum(1 for r in self.results if r.status == STATUS_FAILED)
+        return sum(1 for r in self.results if r.status == RESULT_FAILED)
 
     @property
-    def overall(self) -> str:
-        return STATUS_FAILED if self.failed else STATUS_PASSED
+    def overall_result(self) -> str:
+        """Test Run 의 Result 필드에 넣을 값 (Status 아님)."""
+        return RESULT_FAILED if self.failed else RESULT_PASSED
 
 
 # --------------------------------------------------------------------------- #
@@ -92,13 +116,13 @@ def parse_junit(path, label):
 
         if failure is not None or error is not None:
             node = failure if failure is not None else error
-            status = STATUS_FAILED
+            status = RESULT_FAILED
             message = (node.get("message") or "") + "\n" + (node.text or "")
         elif skipped is not None:
-            status = STATUS_BLOCKED
+            status = RESULT_BLOCKED
             message = skipped.get("message") or ""
         else:
-            status = STATUS_PASSED
+            status = RESULT_PASSED
             message = ""
 
         try:
@@ -203,50 +227,130 @@ class CodebeamerClient:
         print("[ok] Test Case %d건 조회 (이름 기준 매칭 대상)" % len(mapping))
         return mapping
 
-    def post_automated_test_runs(self, tracker_id, run_name, suite, case_ids, description):
+    def fetch_schema(self, tracker_id):
+        """트래커 스키마를 읽어 필드명과 선택지 옵션을 확보한다."""
+        resp = self.s.get(self._url("/trackers/%s/schema" % tracker_id), timeout=TIMEOUT)
+        raw = self._check(resp, "트래커 스키마 조회")
+        fields = raw if isinstance(raw, list) else raw.get("fields", raw)
+        out = {}
+        for f in fields if isinstance(fields, list) else []:
+            key = f.get("legacyRestName") or f.get("name")
+            out[key] = {
+                "name": f.get("name"),
+                "type": f.get("type"),
+                "options": [o.get("name") for o in f.get("options", [])],
+                "mandatory": bool(f.get("mandatoryInStatuses")),
+            }
+        return out
+
+    def check_schema(self, tracker_id):
+        """전송 전 프리플라이트.
+
+        보낼 값이 실제 트래커의 선택지에 존재하는지 미리 확인한다.
+        이 검사가 없어서 Passed 를 Status 에 보내는 오류를 오래 못 잡았다.
+        다국어 인스턴스는 옵션 이름이 로컬라이즈되므로 특히 필요하다.
+        """
+        schema = self.fetch_schema(tracker_id)
+        print("[ok] 트래커 %s 스키마 필드 %d개" % (tracker_id, len(schema)))
+
+        problems = []
+        for field_key, wanted in (("result", [RESULT_PASSED, RESULT_FAILED, RESULT_BLOCKED]),
+                                  ("status", [RUN_STATUS_DONE])):
+            info = schema.get(field_key)
+            if not info:
+                problems.append("필드 '%s' 가 트래커에 없다" % field_key)
+                continue
+            opts = info["options"]
+            print("  %-8s (%s) 옵션: %s" % (field_key, info["name"], ", ".join(opts) or "-"))
+            for w in wanted:
+                if opts and w not in opts:
+                    problems.append("'%s' 는 %s 필드의 유효한 옵션이 아니다 (가능: %s)"
+                                    % (w, field_key, ", ".join(opts)))
+
+        for key in ("build", "testCases"):
+            info = schema.get(key)
+            if info:
+                print("  %-8s (%s) type=%s mandatory=%s"
+                      % (key, info["name"], info["type"], info["mandatory"]))
+            else:
+                problems.append("필드 '%s' 가 트래커에 없다" % key)
+
+        tc = schema.get("testCases")
+        if tc and tc["mandatory"]:
+            print("  [주의] testCases 는 필수 필드다. Test Case 매칭 없이는 생성이 거부된다.")
+
+        if problems:
+            sys.stderr.write("\n[스키마 불일치]\n")
+            for p_ in problems:
+                sys.stderr.write("  - %s\n" % p_)
+            return False
+        print("[ok] 스키마 프리플라이트 통과")
+        return True
+
+    def post_automated_test_runs(self, tracker_id, run_name, suite, case_ids,
+                                 description, build_ref=""):
         """
         POST /api/v3/trackers/{testRunTrackerId}/automatedtestruns
 
-        [검증 필요]
-        아래 페이로드는 Codebeamer v3 문서 기준 구조다. 인스턴스 버전에 따라
-        필드명이 다를 수 있으므로, 최초 1회는 대상 서버의
-        <CB_URL>/swagger-ui/index.html 또는 /api/v3/openapi.json 에서
-        automatedtestruns 요청 스키마를 확인해 대조할 것.
-        --dry-run 으로 페이로드를 먼저 출력해 대조하는 것을 권장.
+        필드 매핑은 실측 스키마(Automotive Template 3.0, tracker 123469) 기준이다.
+          status     워크플로 상태  -> "Finished"
+          result     시험 결과      -> Passed / Failed / Blocked
+          build      빌드 식별자    -> 전용 TextField (description 에 넣지 않는다)
+          testCases  Test Case 표   -> 필수. testCase 참조 + 개별 result
+
+        Passed/Failed 를 status 에 보내던 것이 원래 오류였다.
+        Status 옵션에는 Passed 가 없다 (Unset/In progress/.../Finished/Closed 등).
         """
-        results_payload = []
+        rows = []
+        unmatched = []
         for r in suite.results:
-            entry = {
-                "name": r.name,
-                "status": r.status,
-                "duration": r.duration_ms,
-            }
-            if r.message:
-                entry["conclusion"] = r.message
-            # 이름이 일치하는 Test Case 가 있으면 연결 -> 추적성 확보
-            if r.name in case_ids:
-                entry["testCaseId"] = case_ids[r.name]
-            results_payload.append(entry)
+            cid = case_ids.get(r.name)
+            if cid is None:
+                unmatched.append(r.name)
+                continue
+            rows.append({
+                "testCase": {"id": cid, "type": "TrackerItemReference"},
+                "active": True,
+                "result": r.status,
+            })
+
+        if unmatched:
+            print("[warn] Test Case 미매칭 %d건 (Test Case 트래커에 동명 항목 없음):"
+                  % len(unmatched))
+            for n in unmatched[:5]:
+                print("         - %s" % n)
+            if len(unmatched) > 5:
+                print("         ... 외 %d건" % (len(unmatched) - 5))
 
         payload = {
             "name": run_name,
             "description": description,
             "descriptionFormat": "Html",
-            "status": suite.overall,
-            "results": results_payload,
+            "status": RUN_STATUS_DONE,
+            "result": suite.overall_result,
+            "testCases": rows,
         }
+        if build_ref:
+            payload["build"] = build_ref
 
         if self.dry_run:
             print("[dry-run] POST /trackers/%s/automatedtestruns" % tracker_id)
             print(json.dumps(payload, indent=2, ensure_ascii=False)[:3000])
             return {"id": -1}
 
+        if not rows:
+            sys.stderr.write(
+                "[FAIL] 연결할 Test Case 가 하나도 없다. testCases 는 필수 필드이므로\n"
+                "       이대로 전송하면 거부된다. CB_TEST_CASE_TRACKER_ID 를 설정하고\n"
+                "       Test Case 항목명을 자동화 테스트 함수명과 일치시키십시오.\n")
+            raise requests.HTTPError("testCases empty")
+
         resp = self.s.post(self._url("/trackers/%s/automatedtestruns" % tracker_id),
                            json=payload, timeout=TIMEOUT)
         data = self._check(resp, "자동화 Test Run 생성 (%s)" % run_name)
         run_id = data.get("id") or (data.get("items") or [{}])[0].get("id")
-        print("[ok] Test Run 생성: id=%s status=%s (%d건)"
-              % (run_id, suite.overall, len(results_payload)))
+        print("[ok] Test Run 생성: id=%s result=%s (Test Case %d건 연결)"
+              % (run_id, suite.overall_result, len(rows)))
         return data
 
     def attach(self, item_id, file_path, description=""):
@@ -270,6 +374,7 @@ class CodebeamerClient:
 
 # --------------------------------------------------------------------------- #
 def build_description(build_ref, commit, cov):
+    # build 는 전용 필드로 따로 보내지만, 사람이 읽는 설명에도 남겨 둔다
     rows = ["<p><b>Build:</b> %s<br/><b>Commit:</b> %s</p>"
             % (build_ref or "-", commit or "-")]
     if cov:
@@ -287,6 +392,8 @@ def main():
     ap.add_argument("--commit", default="", help="커밋 SHA")
     ap.add_argument("--dry-run", action="store_true",
                     help="전송하지 않고 페이로드만 출력 (스키마 대조용)")
+    ap.add_argument("--check-schema", action="store_true",
+                    help="트래커 스키마를 조회해 보낼 값이 유효한지만 확인하고 종료")
     args = ap.parse_args()
 
     base_url = os.environ.get("CB_URL")
@@ -294,6 +401,12 @@ def main():
     if not args.dry_run and (not base_url or not tracker_id):
         sys.stderr.write("CB_URL / CB_TEST_RUN_TRACKER_ID 환경변수가 필요합니다.\n")
         return 2
+
+    # 스키마 프리플라이트만 수행하고 종료
+    if args.check_schema:
+        client = CodebeamerClient(base_url, os.environ.get("CB_TOKEN"),
+                                  os.environ.get("CB_USER"), os.environ.get("CB_PASS"))
+        return 0 if client.check_schema(tracker_id) else 1
 
     cov = parse_coverage(args.coverage)
     description = build_description(args.build_ref, args.commit, cov)
@@ -321,7 +434,8 @@ def main():
         run_name = "%s - %s" % (suite.label, args.build_ref or "local")
         try:
             data = client.post_automated_test_runs(
-                tracker_id or "0", run_name, suite, case_ids, description)
+                tracker_id or "0", run_name, suite, case_ids, description,
+                build_ref=args.build_ref)
         except requests.HTTPError:
             exit_code = 1
             continue
