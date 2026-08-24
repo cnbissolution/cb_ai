@@ -61,6 +61,17 @@ PY_FUNC_RE = re.compile(r"^def\s+(\w+)\s*\(")
 C_KEYWORDS = {"if", "for", "while", "switch", "return", "sizeof", "else", "do",
               "typedef", "struct", "union", "enum", "extern", "using", "namespace"}
 
+# ctags 가 함수로 오인하는 테스트 프레임워크 매크로.
+# `TEST_F(Suite, Name) {` 는 ctags 눈에 'TEST_F' 라는 함수 정의로 보인다.
+# 그대로 두면 요구사항 페이지마다 'TEST_F' 가짜 행이 섞이고,
+# 심볼 맵에서는 마지막 케이스가 앞의 것들을 덮어쓴다.
+# 실제 테스트 이름은 TEST_F_RE 로 따로 잡으므로 여기서 버린다.
+MACRO_NAMES = {
+    "TEST", "TEST_F", "TEST_P", "TYPED_TEST", "TYPED_TEST_P",
+    "INSTANTIATE_TEST_SUITE_P", "INSTANTIATE_TEST_CASE_P",
+    "MOCK_METHOD", "EXPECT_CALL", "ON_CALL",
+}
+
 
 # --------------------------------------------------------------------------- #
 def list_files():
@@ -216,7 +227,15 @@ def main():
         if not starts:
             starts = symbols_via_regex(src, lines)
 
-        # TEST_F 는 ctags 가 못 잡으므로 항상 정규식으로 보강
+        # 매크로 오인 항목 제거 (ctags 경로에서만 나오지만 양쪽 모두 적용해 일관성 유지)
+        dropped = [n for n, _ in starts if n in MACRO_NAMES]
+        if dropped:
+            print("[info] %s: 매크로 오인 심볼 %d개 제외 (%s)"
+                  % (rel, len(dropped), ", ".join(sorted(set(dropped)))))
+        starts = [(n, ln) for n, ln in starts if n not in MACRO_NAMES]
+
+        # 실제 테스트 케이스 이름은 정규식으로 보강한다.
+        # (ctags 는 TEST_F 매크로만 보고 케이스 이름을 모른다)
         if suf in C_SUFFIXES:
             known = {n for n, _ in starts}
             for i, line in enumerate(lines):
