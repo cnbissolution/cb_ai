@@ -40,14 +40,14 @@ git clone https://github.com/cnbissolution/cb_ai.git
 4. `docs/CI_VERIFICATION_LOG.md` — CI 에서 실제로 관측된 결과
 
 GitHub Pages (코드 인덱스) 가 이미 떠 있다. ALM 에서 코드로 거는 링크는
-줄 번호가 아니라 심볼 이름 기준이라 코드가 바뀜도 안 깨진다.
+줄 번호가 아니라 심볼 이름 기준이라 코드가 바뀌어도 안 깨진다.
 자세한 건 `docs/TRACEABILITY_LINKING.md`.
 
 ### 저장소에 없는 것
 
 작업 PC 의 `ptc_cicdct\_archive\` 는 **의도적으로 제외**했다.
-개인 메일·고객사명·웹비나 참가자 명단 등 공개하면 안 되는 내용이 들어 있다.
-`.gitignore` 로 막아렒다. 새 PC 로 옮길 때도 가져가지 말 것.
+개인 메일·고객사명·웨비나 참가자 명단 등 공개하면 안 되는 내용이 들어 있다.
+`.gitignore` 로 막아뒀다. 새 PC 로 옮길 때도 가져가지 말 것.
 
 ---
 
@@ -66,7 +66,7 @@ GitHub Pages (코드 인덱스) 가 이미 떠 있다. ALM 에서 코드로 거�
   `cb_export_items_csv` / `cb_import_items_csv` (CSV 라운드트립),
   `cb_check_field_values`
 
-바뀜 파일: `src/codebeamer_mcp/` 아래 `formatters.py`, `client.py`,
+바뀐 파일: `src/codebeamer_mcp/` 아래 `formatters.py`, `client.py`,
 `server.py`, `server_csv.py`(신규). 원본 백업은 같은 폴더의 `.bak_*` 에 있다.
 
 ### 2-2. 옮기는 방법 — 비공개 저장소로 만들 것
@@ -104,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 **이전 사람의 `.env` 를 복사해 쓰지 말 것.** 감사 로그에 남는 작성자가
 엉뚱한 사람이 되고, 계정 회수 시 조용히 깨진다. 본인 계정으로 새로 넣는다.
 
-설치 후 Claude Desktop / Claude Code 를 **재시작**해야 도구가 뜼다.
+설치 후 Claude Desktop / Claude Code 를 **재시작**해야 도구가 뜬다.
 
 ---
 
@@ -130,7 +130,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 - 설명/댓글 포맷은 `Html` 거부. `Wiki` 또는 `PlainText`
 - 프로젝트 생성은 v3 REST 에 없다. UI 로만 (트래커 생성은 API 가능)
 
-나머지는 `CHANGELOG_20260825.md` 3절 표에 정리해둖다.
+나머지는 `CHANGELOG_20260825.md` 3절 표에 정리해뒀다.
 
 ---
 
@@ -141,7 +141,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 1. **MCP 를 저장소로 만들기** (2-2). 이게 안 되면 나머지가 의미 없다
 2. **MCP 재시작 후 실서버 검증** — 로컬 검증만 마친 상태다
    - `cb_list_tracker_items` 가 실제 건수를 보여주는지
-   - `cb_add_comment` 이 실제로 성공하는지 (415 해소 여부)
+   - `cb_add_comment` 가 실제로 성공하는지 (415 해소 여부)
    - `cb_export_items_csv` → `cb_import_items_csv(dry_run=True)` 왕복
 3. **SDD 를 Codebeamer 에 적재** — 지금은 SRS 만 올라가 있다
 4. **association 연결** — SDD 적재 후 요구사항 ↔ 코드/설계를
