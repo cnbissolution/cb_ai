@@ -85,6 +85,10 @@ jobs:
         env:
           CB_URL: ${{ secrets.CB_URL }}
           CB_TOKEN: ${{ secrets.CB_TOKEN }}
+          # 이 서버에는 API 토큰 발급 기능이 없다 — 토큰이 비면 스크립트가 Basic
+          # 인증으로 넘어가므로 그 자격증명도 함께 넘겨야 한다.
+          CB_USER: ${{ secrets.CB_USER }}
+          CB_PASS: ${{ secrets.CB_PASS }}
           CB_SWCD_UPSTREAM_FIELD_NAME: ${{ vars.CB_SWCD_UPSTREAM_FIELD_NAME }}
           CB_SWCD_URL_FIELD: ${{ vars.CB_SWCD_URL_FIELD }}
           CB_SWCD_URL_FIELD_NAME: ${{ vars.CB_SWCD_URL_FIELD_NAME }}
@@ -125,6 +129,10 @@ jobs:
         env:
           CB_URL: ${{ secrets.CB_URL }}
           CB_TOKEN: ${{ secrets.CB_TOKEN }}
+          # 이 서버에는 API 토큰 발급 기능이 없다 — 토큰이 비면 스크립트가 Basic
+          # 인증으로 넘어가므로 그 자격증명도 함께 넘겨야 한다.
+          CB_USER: ${{ secrets.CB_USER }}
+          CB_PASS: ${{ secrets.CB_PASS }}
           CB_SWCD_UPSTREAM_FIELD_NAME: ${{ vars.CB_SWCD_UPSTREAM_FIELD_NAME }}
           CB_SWCD_URL_FIELD: ${{ vars.CB_SWCD_URL_FIELD }}
           CB_SWCD_URL_FIELD_NAME: ${{ vars.CB_SWCD_URL_FIELD_NAME }}
