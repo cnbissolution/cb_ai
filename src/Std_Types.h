@@ -5,10 +5,17 @@
  * @note    실제 양산 환경에서는 MCAL 벤더가 제공하는 Std_Types.h 를 사용한다.
  *          본 파일은 호스트(x86) 상에서 단위/기능 시험 및 커버리지 계측을
  *          수행하기 위한 대체 정의이며, Platform_Types.h 의 최소 부분집합만 포함한다.
+
  */
 #ifndef STD_TYPES_H
 #define STD_TYPES_H
 
+/**
+ * @brief Platform_Types 부분집합 — 정수 폭과 부동소수 정밀도를 정한다
+ *
+ * @unit SCS-ST-001 -> SDD-AEB-203
+ * @verified_by SCS-AF-002  TTC 부동소수 연산이 float32 정밀도를 실증한다
+ */
 /* --- Platform_Types.h (AUTOSAR SWS_Platform) 부분집합 --- */
 typedef unsigned char       boolean;
 typedef signed char         sint8;
@@ -28,6 +35,13 @@ typedef double              float64;
 #define FALSE ((boolean)0)
 #endif
 
+/**
+ * @brief Std_Types 표준 반환형 — 현재 이 컴포넌트에서 미사용
+ *
+ * @unit SCS-ST-002 -> SDD-AEB-203
+ * @verified_by none  미사용. AUTOSAR 표준 부분집합의 완전성을 위해 유지
+ *                    (유지 사유는 SDD-AEB-203 에 기술)
+ */
 /* --- Std_Types.h (AUTOSAR SWS_StandardTypes) 부분집합 --- */
 typedef uint8 Std_ReturnType;
 
