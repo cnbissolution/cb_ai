@@ -1,0 +1,146 @@
+# =============================================================================
+#  SWCD 동기화 — 코드 유닛을 Codebeamer 항목으로 올리고 SDD 에 참조 필드로 잇는다
+#
+#  link_code.py(association) 와 목적은 같고 표현이 다르다. association 은
+#  upstream/downstream 이 되지 않아 **추적성 리포트와 Traceability Browser 에
+#  나오지 않는다**(docs/KNOWLEDGE.md 실측). SDD 쪽에서 하위 코드를 트리로 펼치려면
+#  참조 필드여야 한다. 이 워크플로가 그 경로다.
+#
+#  방향은 상향식이다. 링크는 SWCD 항목에만 쓰고 SDD 항목은 건드리지 않는다 —
+#  상위 문서를 수정하지 않으므로 베이스라인이 흔들리지 않는다.
+#
+#  Job 을 세 개로 쪼갠 이유: 앞의 두 개는 자격증명이 필요 없고 소스만 본다.
+#  ALM 동기화만 실패했을 때 그 job 만 다시 돌리면 된다 (부분 재실행).
+#
+#  필요한 설정:
+#    secrets.CB_URL / CB_TOKEN            (CB_BASE_URL / CB_API_TOKEN 도 받는다)
+#    vars.CB_SWCD_TRACKER_ID              코드 유닛(SWCD) 트래커 id
+#    vars.CB_SWDD_TRACKER_ID              상세설계 트래커 id
+#    vars.CB_SWCD_UPSTREAM_FIELD          SWCD → SDD 참조 필드 id (기본 17)
+#    vars.CB_SWCD_UPSTREAM_FIELD_NAME     그 필드 이름
+#    vars.CB_SWCD_URL_FIELD               소스 링크를 넣을 WikiText 필드 id (기본 10003)
+#                                         0 으로 두면 링크를 쓰지 않는다
+#    vars.CB_SWCD_URL_FIELD_NAME          그 필드 이름 (기본 Github_URL)
+# =============================================================================
+name: SWCD 동기화
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "test/**"
+      - "scripts/build_symbol_map.py"
+      - "scripts/sync_swcd.py"
+  pull_request:
+    paths:
+      - "src/**"
+      - "test/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1단계: 소스만 본다. 자격증명이 필요 없어 가장 먼저 실패시킨다 ──────────────
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 도구 설치
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y universal-ctags
+          python3 -m pip install --upgrade pip requests
+
+      - name: 유닛 선언 검사
+        run: python3 scripts/check_units.py
+
+      - name: 심볼 인덱스 생성 (@unit / @req 파싱)
+        run: python3 scripts/build_symbol_map.py
+
+      # unit_index.json 을 다음 job 으로 넘긴다. 같은 커밋을 두 번 파싱하지 않는다
+      - name: 인덱스 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-index
+          path: |
+            unit_index.json
+            redirects_generated.json
+          if-no-files-found: error
+
+  # ── 2단계: 무엇이 바뀔지 먼저 보여준다. PR 에서는 여기까지만 돈다 ─────────────
+  plan:
+    needs: parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install --upgrade pip requests
+      - uses: actions/download-artifact@v4
+        with:
+          name: unit-index
+
+      - name: 동기화 계획 (쓰지 않는다)
+        env:
+          CB_URL: ${{ secrets.CB_URL }}
+          CB_TOKEN: ${{ secrets.CB_TOKEN }}
+          CB_SWCD_UPSTREAM_FIELD_NAME: ${{ vars.CB_SWCD_UPSTREAM_FIELD_NAME }}
+          CB_SWCD_URL_FIELD: ${{ vars.CB_SWCD_URL_FIELD }}
+          CB_SWCD_URL_FIELD_NAME: ${{ vars.CB_SWCD_URL_FIELD_NAME }}
+        run: |
+          if [ -z "${{ vars.CB_SWCD_TRACKER_ID }}" ]; then
+            echo "::error::vars.CB_SWCD_TRACKER_ID 가 설정되지 않았다"
+            exit 1
+          fi
+          python3 scripts/sync_swcd.py \
+            --swcd-tracker "${{ vars.CB_SWCD_TRACKER_ID }}" \
+            --swdd-tracker "${{ vars.CB_SWDD_TRACKER_ID }}" \
+            --upstream-field "${{ vars.CB_SWCD_UPSTREAM_FIELD || '17' }}" \
+            --dry-run | tee plan.txt
+
+      - name: 계획을 실행 화면에 붙인다
+        if: always()
+        run: |
+          {
+            echo "## SWCD 동기화 계획"
+            echo '```'
+            cat plan.txt 2>/dev/null || echo "(계획을 만들지 못했다)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 3단계: 실제 쓰기. main 푸시에서만 돈다 ──────────────────────────────────
+  sync:
+    needs: plan
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install --upgrade pip requests
+      - uses: actions/download-artifact@v4
+        with:
+          name: unit-index
+
+      - name: Codebeamer 동기화
+        env:
+          CB_URL: ${{ secrets.CB_URL }}
+          CB_TOKEN: ${{ secrets.CB_TOKEN }}
+          CB_SWCD_UPSTREAM_FIELD_NAME: ${{ vars.CB_SWCD_UPSTREAM_FIELD_NAME }}
+          CB_SWCD_URL_FIELD: ${{ vars.CB_SWCD_URL_FIELD }}
+          CB_SWCD_URL_FIELD_NAME: ${{ vars.CB_SWCD_URL_FIELD_NAME }}
+        run: |
+          python3 scripts/sync_swcd.py \
+            --swcd-tracker "${{ vars.CB_SWCD_TRACKER_ID }}" \
+            --swdd-tracker "${{ vars.CB_SWDD_TRACKER_ID }}" \
+            --upstream-field "${{ vars.CB_SWCD_UPSTREAM_FIELD || '17' }}" \
+            | tee sync.txt
+
+      - name: 결과를 실행 화면에 붙인다
+        if: always()
+        run: |
+          {
+            echo "## SWCD 동기화 결과"
+            echo '```'
+            cat sync.txt 2>/dev/null || echo "(동기화가 실행되지 못했다)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
