@@ -15,9 +15,13 @@ Test Run 을 생성하고 Test Case 항목과 연결하여 추적성을 확보�
 환경변수:
   CB_URL                    예: https://codebeamer.example.com/cb
   CB_TOKEN                  Personal Access Token (권장)
+                            CB_API_TOKEN 이름도 받는다
   CB_USER / CB_PASS         Basic 인증 (CB_TOKEN 미설정 시 대체)
+                            CB_USERNAME / CB_PASSWORD 이름도 받는다
   CB_TEST_RUN_TRACKER_ID    Test Run 트래커 ID
-  CB_TEST_CASE_TRACKER_ID   Test Case 트래커 ID (필수 - 아래 참조)
+  CB_TEST_CASE_TRACKER_ID   Test Case 트래커 ID. **쉼표로 여러 개** 가능
+                            (단위시험 SWE.4 와 소프트웨어 검증 SWE.6 이
+                             서로 다른 트래커에 있다)
 
 엔드포인트:
   Test Run 생성은 일반 항목 생성(/trackers/{id}/items)이 아니라 테스트 실행 전용
@@ -49,7 +53,14 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cb_common      # noqa: E402
+
 TIMEOUT = 30
+
+# Test Case 의 `GTest Name` 필드 id. 이 필드에 `Suite.Case` 를 쉼표로
+# 나열해 두면 제목을 고쳐도 매칭이 끊기지 않는다. 0 이면 이름으로만 맞춘다.
+GTEST_FIELD_ID = int(os.environ.get("CB_GTEST_FIELD_ID", "10005") or 0)
 
 # Codebeamer Test Run 트래커는 '상태(Status)'와 '결과(Result)'가 별개 필드다.
 # 실측 스키마(Automotive Template 3.0, tracker 123469) 기준:
@@ -170,16 +181,17 @@ def parse_coverage(path):
 # --------------------------------------------------------------------------- #
 class CodebeamerClient:
     def __init__(self, base_url, token, user, password, dry_run=False):
-        self.base = base_url.rstrip("/")
+        # 자격증명 해석은 cb_common 에 맡긴다. 환경변수 이름이 두 갈래
+        # (CB_URL/CB_TOKEN 과 CB_BASE_URL/CB_API_TOKEN) 라 여기서 한쪽만
+        # 보면 다른 설정에서 401 이 난다.
+        self.base = cb_common.base_url(base_url)
         self.dry_run = dry_run
-        self.s = requests.Session()
-
-        if token:
-            self.s.headers["Authorization"] = "Bearer %s" % token
-        elif user and password:
-            self.s.auth = (user, password)
-        elif not dry_run:
-            raise SystemExit("인증 정보 없음: CB_TOKEN 또는 CB_USER/CB_PASS 를 설정하십시오.")
+        try:
+            self.s = cb_common.session()
+        except SystemExit:
+            if not dry_run:
+                raise
+            self.s = requests.Session()
 
         self.s.headers["Accept"] = "application/json"
         retry = Retry(total=3, backoff_factor=1.0,
@@ -192,8 +204,8 @@ class CodebeamerClient:
         return "%s/api/v3%s" % (self.base, path)
 
     def _check(self, resp, what):
-        """상태코드를 반드시 확인한다. 확인 없이 json()['id'] 에 접근하면
-        실패 시 KeyError 로 엉뚱한 지점에서 파이프라인이 죽는다."""
+        """상태코드를 반드시 확인한다. 원본 결함(D-5): 확인 없이 json()['id'] 에
+        접근하여 실패 시 KeyError 로 엉뚱한 지점에서 파이프라인이 죽었다."""
         if not resp.ok:
             sys.stderr.write("[FAIL] %s: HTTP %d\n" % (what, resp.status_code))
             sys.stderr.write("        %s\n" % resp.text[:1000])
@@ -203,29 +215,78 @@ class CodebeamerClient:
         except ValueError:
             return {}
 
-    def find_test_case_ids(self, tracker_id):
-        """Test Case 트래커의 항목명 -> ID 매핑을 조회한다.
-        자동화 테스트 함수명을 Test Case 항목명과 맞춰 두면 추적성이 자동 연결된다."""
-        if not tracker_id:
+    def find_test_case_ids(self, tracker_ids):
+        """Test Case 의 **매칭 키 -> ID** 매핑을 조회한다
+        (ASPICE 4.0 SWE.4.BP4 — 검증 결과 <-> 검증 방안).
+
+        매칭 키는 두 갈래로 모은다.
+
+          1. `GTest Name` 필드 (권장) — `Suite.Case` 를 쉼표로 나열한다
+          2. 항목 이름 (되돌아갈 길) — 필드가 비어 있는 옛 항목을 위해 남긴다
+
+        **필드를 정본으로 삼는 이유.** 제목으로 맞추면 한글 제목을 다듬는
+        순간 매칭이 끊기는데, 끊겼다는 걸 아무도 모른다. 실제로 이 프로젝트에서
+        시험 결과와 케이스 연결이 한 번도 성사된 적이 없었고 화면상으로는
+        정상이었다. 필드는 사람이 읽는 값이 아니라 기계의 키라 안 건드린다.
+
+        한 명세가 여러 케이스를 갖는 경우(경계값 시험)도 쉼표로 담긴다.
+
+        `tracker_ids` 는 쉼표로 구분된 여러 개를 받는다. 단위시험(SWE.4)과
+        소프트웨어 검증(SWE.6)이 서로 다른 트래커에 있기 때문이다.
+        """
+        raw = str(tracker_ids or "").strip()
+        if not raw:
             print("[info] CB_TEST_CASE_TRACKER_ID 미설정 - Test Case 링크 생략")
             return {}
+
         mapping = {}
-        page = 1
-        while True:
-            resp = self.s.get(self._url("/trackers/%s/items" % tracker_id),
-                              params={"page": page, "pageSize": 100}, timeout=TIMEOUT)
-            data = self._check(resp, "Test Case 목록 조회")
-            items = data.get("items", [])
-            if not items:
-                break
-            for it in items:
-                if it.get("name"):
-                    mapping[it["name"]] = it["id"]
-            if page * 100 >= data.get("total", 0):
-                break
-            page += 1
-        print("[ok] Test Case %d건 조회 (이름 기준 매칭 대상)" % len(mapping))
+        for tid in [x.strip() for x in raw.split(",") if x.strip()]:
+            page, got, keyed = 1, 0, 0
+            while True:
+                resp = self.s.get(self._url("/trackers/%s/items" % tid),
+                                  params={"page": page, "pageSize": 100},
+                                  timeout=TIMEOUT)
+                data = self._check(resp, "Test Case 목록 조회 (%s)" % tid)
+                # 이 엔드포인트는 `itemRefs` 로 준다. `items` 로 읽으면
+                # 항상 0건이 되어 매칭이 조용히 실패한다
+                items = data.get("itemRefs") or data.get("items") or []
+                if not items:
+                    break
+                for it in items:
+                    entry = {"id": it["id"], "name": it.get("name") or "",
+                             "tracker": int(tid)}
+                    if it.get("name"):
+                        mapping.setdefault(it["name"], entry)
+                    for key in self._gtest_keys(it["id"]):
+                        mapping[key] = entry             # 필드가 이름을 이긴다
+                        keyed += 1
+                got += len(items)
+                if page * 100 >= data.get("total", 0):
+                    break
+                page += 1
+            print("[ok] 트래커 %s: Test Case %d건 (GTest Name %d개)"
+                  % (tid, got, keyed))
+
+        print("[ok] 매칭 키 %d개 확보" % len(mapping))
         return mapping
+
+    def _gtest_keys(self, item_id):
+        """항목의 `GTest Name` 필드에서 매칭 키를 꺼낸다. 없으면 빈 목록.
+
+        필드가 비어 있으면 그 Test Case 는 **자동화되지 않은 것**이다. 수동
+        시험이 섞인 프로젝트에서 이 구분이 중요하므로 조용히 이름으로
+        떨어지되, 위 호출부가 개수를 찍어 눈에 보이게 한다.
+        """
+        if not GTEST_FIELD_ID:
+            return []
+        try:
+            resp = self.s.get(self._url("/items/%s" % item_id), timeout=TIMEOUT)
+            data = self._check(resp, "Test Case 조회 (%s)" % item_id)
+        except Exception:                                 # noqa: BLE001
+            return []
+        raw = next((f.get("value") for f in data.get("customFields") or []
+                    if f.get("fieldId") == GTEST_FIELD_ID), "") or ""
+        return [k.strip() for k in raw.split(",") if k.strip()]
 
     def fetch_schema(self, tracker_id):
         """트래커 스키마를 읽어 필드명과 선택지 옵션을 확보한다."""
@@ -289,72 +350,98 @@ class CodebeamerClient:
 
     def post_automated_test_runs(self, tracker_id, run_name, suite, case_ids,
                                  description, build_ref=""):
-        """
-        POST /api/v3/trackers/{testRunTrackerId}/automatedtestruns
+        """Test Run 을 만들고 케이스별 결과를 채운다. **두 번 부른다.**
 
-        필드 매핑은 실측 스키마(Automotive Template 3.0, tracker 123469) 기준이다.
-          status     워크플로 상태  -> "Finished"
-          result     시험 결과      -> Passed / Failed / Blocked
-          build      빌드 식별자    -> 전용 TextField (description 에 넣지 않는다)
-          testCases  Test Case 표   -> 필수. testCase 참조 + 개별 result
+            1. POST /v3/trackers/{runTracker}/testruns
+                 `testCaseIds` 로 실행을 만든다. 부모 Run 1개 + 케이스별 자식
+                 Run 이 생기고, 시험 절차(Test Step)가 명세에서 복사돼 온다
+            2. PUT  /v3/testruns/{parentId}
+                 `updateRequestModels` 로 케이스별 PASSED/FAILED 를 넣는다.
+                 `parentResultPropagation` 이 부모 결과까지 굴려 올린다
 
-        Passed/Failed 를 status 에 보내던 것이 원래 오류였다.
-        Status 옵션에는 Passed 가 없다 (Unset/In progress/.../Finished/Closed 등).
+        **`automatedtestruns` 를 쓰지 않는 이유.** 그쪽은 Test Case 를
+        `groupName`(폴더) + `name` 으로 **이름 매칭**한다. 즉 ALM 의 폴더
+        구조를 GTest 픽스처 이름에 맞춰 두어야 하고, 제목을 고치면 조용히
+        끊긴다. 여기 쓰는 경로는 **항목 id 로 붙으므로** 우리 매칭 키
+        (`GTest Name` 필드)의 값어치가 그대로 유지된다.
+
+        스펙 근거는 `/api-docs` 의 CreateTestRunRequest / UpdateTestRunRequest.
+        결과 enum 은 **대문자**다 — PASSED / FAILED / BLOCKED / NOT_APPLICABLE.
         """
-        rows = []
-        unmatched = []
+        ENUM = {RESULT_PASSED: "PASSED", RESULT_FAILED: "FAILED",
+                RESULT_BLOCKED: "BLOCKED"}
+
+        seen, updates, unmatched = [], [], []
         for r in suite.results:
-            cid = case_ids.get(r.name)
-            if cid is None:
-                unmatched.append(r.name)
+            # `Suite.Case` 를 먼저 본다. JUnit 의 classname 이 GTest 픽스처
+            # (pytest 는 모듈 경로)라 가장 구체적인 키다. 못 찾으면 케이스
+            # 이름만으로 물러선다 — GTest Name 을 아직 안 채운 항목을 위해서다.
+            hit = None
+            for key in ((("%s.%s" % (r.classname, r.name)) if r.classname else None),
+                        r.name):
+                if key and key in case_ids:
+                    hit = case_ids[key]
+                    break
+            if hit is None:
+                unmatched.append(("%s.%s" % (r.classname, r.name))
+                                 if r.classname else r.name)
                 continue
-            rows.append({
-                "testCase": {"id": cid, "type": "TrackerItemReference"},
-                "active": True,
-                "result": r.status,
-            })
+            if hit["id"] not in seen:
+                seen.append(hit["id"])
+            row = {"testCaseReference": {"id": hit["id"],
+                                         "type": "TrackerItemReference"},
+                   "result": ENUM.get(r.status, "BLOCKED")}
+            if r.duration_ms:
+                row["runTime"] = max(1, r.duration_ms // 1000)
+            if r.message:
+                row["conclusion"] = r.message[:900]
+            updates.append(row)
 
         if unmatched:
-            print("[warn] Test Case 미매칭 %d건 (Test Case 트래커에 동명 항목 없음):"
-                  % len(unmatched))
+            print("[warn] Test Case 미매칭 %d건 — `GTest Name` 필드나 항목명을 "
+                  "확인하십시오:" % len(unmatched))
             for n in unmatched[:5]:
                 print("         - %s" % n)
             if len(unmatched) > 5:
                 print("         ... 외 %d건" % (len(unmatched) - 5))
 
-        payload = {
-            "name": run_name,
-            "description": description,
-            "descriptionFormat": "Html",
-            "status": RUN_STATUS_DONE,
-            "result": suite.overall_result,
-            "testCases": rows,
-        }
-        if build_ref:
-            payload["build"] = build_ref
+        create = {"testCaseIds": seen,
+                  "testRunModel": {"name": run_name,
+                                   "description": description,
+                                   "descriptionFormat": "Wiki"}}
 
         if self.dry_run:
-            print("[dry-run] POST /trackers/%s/automatedtestruns" % tracker_id)
-            print(json.dumps(payload, indent=2, ensure_ascii=False)[:3000])
+            print("[dry-run] POST /trackers/%s/testruns" % tracker_id)
+            print(json.dumps(create, indent=2, ensure_ascii=False)[:1500])
+            print("[dry-run] PUT /testruns/{id}  결과 %d건" % len(updates))
+            print(json.dumps(updates[:3], indent=2, ensure_ascii=False)[:900])
             return {"id": -1}
 
-        if not rows:
+        if not seen:
             sys.stderr.write(
-                "[FAIL] 연결할 Test Case 가 하나도 없다. testCases 는 필수 필드이므로\n"
-                "       이대로 전송하면 거부된다. CB_TEST_CASE_TRACKER_ID 를 설정하고\n"
-                "       Test Case 항목명을 자동화 테스트 함수명과 일치시키십시오.\n")
-            raise requests.HTTPError("testCases empty")
+                "[FAIL] 연결할 Test Case 가 하나도 없다. 결과만 올리면 "
+                "무엇을 검증한 것인지 알 수 없어 증적이 되지 않는다.\n"
+                "       CB_TEST_CASE_TRACKER_ID 를 설정하고 Test Case 의 "
+                "`GTest Name` 필드를 채우십시오.\n")
+            raise requests.HTTPError("no matching test case")
 
-        resp = self.s.post(self._url("/trackers/%s/automatedtestruns" % tracker_id),
-                           json=payload, timeout=TIMEOUT)
-        data = self._check(resp, "자동화 Test Run 생성 (%s)" % run_name)
-        run_id = data.get("id") or (data.get("items") or [{}])[0].get("id")
-        print("[ok] Test Run 생성: id=%s result=%s (Test Case %d건 연결)"
-              % (run_id, suite.overall_result, len(rows)))
+        resp = self.s.post(self._url("/trackers/%s/testruns" % tracker_id),
+                           json=create, timeout=TIMEOUT)
+        data = self._check(resp, "Test Run 생성 (%s)" % run_name)
+        run_id = data.get("id")
+
+        resp = self.s.put(self._url("/testruns/%s" % run_id),
+                          json={"parentResultPropagation": True,
+                                "updateRequestModels": updates},
+                          timeout=TIMEOUT)
+        self._check(resp, "Test Run 결과 반영 (%s)" % run_id)
+
+        print("[ok] Test Run %s — 케이스 %d건 (%s)"
+              % (run_id, len(updates), suite.overall_result))
         return data
-
     def attach(self, item_id, file_path, description=""):
-        """POST /api/v3/items/{itemId}/attachments — 커버리지 리포트 등 증적 첨부."""
+        """POST /api/v3/items/{itemId}/attachments — 커버리지 리포트 등 증적 첨부.
+        원본 결함(D-5): 커버리지 파일을 인자로만 받고 업로드하지 않았다."""
         if not os.path.exists(file_path):
             print("[skip] 첨부 대상 없음: %s" % file_path)
             return
@@ -374,13 +461,16 @@ class CodebeamerClient:
 
 # --------------------------------------------------------------------------- #
 def build_description(build_ref, commit, cov):
+    """Test Run 설명. 위키 마크업으로 만든다 — Codebeamer 는 Html 을 거부한다
+    (400 Description format 'HTML' is deprecated)."""
     # build 는 전용 필드로 따로 보내지만, 사람이 읽는 설명에도 남겨 둔다
-    rows = ["<p><b>Build:</b> %s<br/><b>Commit:</b> %s</p>"
-            % (build_ref or "-", commit or "-")]
+    rows = ["||항목||값",
+            "|__Build__|%s" % (build_ref or "-"),
+            "|__Commit__|%s" % (commit or "-")]
     if cov:
-        rows.append("<p><b>Code Coverage</b><br/>Line: %s%%<br/>Branch: %s%%</p>"
-                    % (cov["line"], cov["branch"]))
-    return "".join(rows)
+        rows.append("|__Line Coverage__|%s%%" % cov["line"])
+        rows.append("|__Branch Coverage__|%s%%" % cov["branch"])
+    return "\n".join(rows)
 
 
 def main():
@@ -396,10 +486,24 @@ def main():
                     help="트래커 스키마를 조회해 보낼 값이 유효한지만 확인하고 종료")
     args = ap.parse_args()
 
-    base_url = os.environ.get("CB_URL")
-    tracker_id = os.environ.get("CB_TEST_RUN_TRACKER_ID")
-    if not args.dry_run and (not base_url or not tracker_id):
-        sys.stderr.write("CB_URL / CB_TEST_RUN_TRACKER_ID 환경변수가 필요합니다.\n")
+    # cb_common 이 CB_URL / CB_BASE_URL 둘 다 본다. 여기서 한쪽만 읽어
+    # 넘기면 다른 이름으로 설정한 환경에서 기본값이 우선해버린다
+    base_url = os.environ.get("CB_URL") or os.environ.get("CB_BASE_URL")
+    # ASPICE 는 BP 별로 산출물을 요구한다. 단위 검증(SWE.4) 결과와 소프트웨어
+    # 검증(SWE.6) 결과를 한 트래커에 섞으면 심사에서 갈라 보여줄 수 없다.
+    # 레벨별 트래커가 없으면 예전처럼 한 곳으로 떨어진다.
+    fallback = os.environ.get("CB_TEST_RUN_TRACKER_ID")
+    run_trackers = {
+        "Automated Unit Test Run":
+            os.environ.get("CB_UNIT_RUN_TRACKER_ID") or fallback,
+        "Automated Functional Test Run":
+            os.environ.get("CB_VERIF_RUN_TRACKER_ID") or fallback,
+    }
+    tracker_id = fallback or next((v for v in run_trackers.values() if v), None)
+    if not args.dry_run and (not base_url or not any(run_trackers.values())):
+        sys.stderr.write(
+            "CB_URL 과 결과 트래커가 필요합니다 — CB_UNIT_RUN_TRACKER_ID / "
+            "CB_VERIF_RUN_TRACKER_ID (또는 CB_TEST_RUN_TRACKER_ID).\n")
         return 2
 
     # 스키마 프리플라이트만 수행하고 종료
@@ -419,13 +523,15 @@ def main():
         return 1
 
     client = CodebeamerClient(
-        base_url or "http://localhost/cb",
+        base_url,
         os.environ.get("CB_TOKEN"),
         os.environ.get("CB_USER"),
         os.environ.get("CB_PASS"),
         dry_run=args.dry_run,
     )
-    case_ids = {} if args.dry_run else client.find_test_case_ids(
+    # 조회는 GET 이라 서버에 영향이 없다. dry-run 에서도 돌려야
+    # 이름 매칭이 실제로 되는지 미리 확인할 수 있다
+    case_ids = client.find_test_case_ids(
         os.environ.get("CB_TEST_CASE_TRACKER_ID", "")
     )
 
@@ -433,8 +539,9 @@ def main():
     for suite in suites:
         run_name = "%s - %s" % (suite.label, args.build_ref or "local")
         try:
+            target = run_trackers.get(suite.label) or tracker_id or "0"
             data = client.post_automated_test_runs(
-                tracker_id or "0", run_name, suite, case_ids, description,
+                target, run_name, suite, case_ids, description,
                 build_ref=args.build_ref)
         except requests.HTTPError:
             exit_code = 1
