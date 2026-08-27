@@ -9,15 +9,16 @@
 
 해법:
   심볼 이름 기준의 안정적인 URL 을 만든다.
-    sym/src/Aeb_FusionEngine.c/CalculateTTC/  ->  GitHub blob #L36-L55
+    docs/sym/src/Aeb_FusionEngine.c/CalculateTTC/  ->  GitHub blob #L49-L60
   라인 번호가 바뀌면 인덱스만 다시 생성되고, ALM 에 저장한 링크는 그대로 유효하다.
 
   추가로 소스의 @req 주석을 파싱해 요구사항 단위 URL 도 만든다.
-    req/SRS-AEB-305/  ->  해당 요구사항의 구현/검증 위치를 모은 페이지
+    docs/req/SRS-AEB-305/  ->  해당 요구사항을 구현한 코드 위치
 
 출력:
   redirects_generated.json   심볼 -> GitHub blob 링크
   req_index.json             요구사항 ID -> 구현/검증 심볼 목록
+  unit_index.json            유닛 ID(@unit) -> 심볼 + 상위 설계 ID
   docs/generated/CODE_INDEX.md   사람이 읽는 인덱스 표
 
 환경변수:
@@ -48,6 +49,17 @@ EXCLUDE_DIRS = {".git", ".github", "docs_build", "build", "__pycache__", "_archi
 
 # @req SRS-AEB-305 / @verifies SRS-AEB-401 형태의 추적 주석
 REQ_TAG_RE = re.compile(r"@(req|verifies|satisfies)\s+([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)")
+
+# @unit SCS-AF-002 -> SDD-AEB-501, SDD-AEB-602
+#
+# 추적성의 기본 방향은 하위 -> 상위다. 코드가 스스로 "나는 어느 설계를
+# 구현했다"고 선언하게 만든다. ALM 쪽 association 과 대조해 양쪽이
+# 어긋나면 verify_trace.py 가 잡는다.
+UNIT_TAG_RE = re.compile(
+    r"@unit\s+(SCS-[A-Z0-9]+-[A-Z0-9]+)\s*-+>\s*"
+    r"([A-Z][A-Z0-9-]*(?:\s*,\s*[A-Z][A-Z0-9-]*)*)")
+# 한 줄에 여러 ID 를 콤마로 나열한 경우도 잡는다
+REQ_ID_RE = re.compile(r"\b((?:SRS|SYS|SWE)-[A-Z0-9]+-\d+)\b")
 
 # C 함수 정의: 컬럼 0 에서 시작, 세미콜론으로 끝나지 않고, 괄호를 포함
 C_FUNC_RE = re.compile(
@@ -176,12 +188,17 @@ def symbols_via_regex(src: Path, lines):
     return starts
 
 
-def collect_req_tags(lines, start_1based, end_1based, lookback=14):
-    """함수 앞 문서 블록과 함수 본문에서 @req / @verifies 태그를 수집한다."""
+def collect_req_tags(lines, start_1based, end_1based, lookback=14, floor_1based=1):
+    """함수 앞 문서 블록과 함수 본문에서 @req / @verifies 태그를 수집한다.
+
+    `floor_1based` 는 **앞 심볼이 끝난 다음 줄**이다. 이게 없으면 위쪽
+    lookback 이 앞 함수 영역까지 넘어가 그 함수의 태그를 빨아온다.
+    Python 은 `@verifies` 가 `def` 아래 독스트링에 있어서 특히 잘 샜다 —
+    앞 함수의 독스트링이 그대로 뒤 함수 것으로 잡혔다."""
     found = []
 
-    # 함수 선언 위쪽 문서 블록
-    top = max(0, start_1based - 1 - lookback)
+    # 함수 선언 위쪽 문서 블록 (앞 심볼 영역은 침범하지 않는다)
+    top = max(0, start_1based - 1 - lookback, floor_1based - 1)
     for line in lines[top:start_1based - 1]:
         for kind, rid in REQ_TAG_RE.findall(line):
             found.append((kind, rid))
@@ -200,6 +217,51 @@ def collect_req_tags(lines, start_1based, end_1based, lookback=14):
     return out
 
 
+def scan_units(unit_index, rel, lines, sym_ranges):
+    """파일 전체에서 `@unit` 선언을 수집한다.
+
+    심볼(함수)에 종속시키지 않는다. `@unit` 태그 자체가 유닛의 식별자이고,
+    헤더의 typedef 나 파일 스코프 매크로처럼 함수가 아닌 선언에도 붙기 때문이다.
+    마침 어떤 심볼 범위 안이거나 바로 앞이면 그 심볼도 기록한다 — 있으면
+    줄 번호가 아닌 안정 링크를 걸 수 있다."""
+    for i, line in enumerate(lines):
+        m = UNIT_TAG_RE.search(line)
+        if not m:
+            continue
+        uid = m.group(1)
+        designs = [d.strip() for d in m.group(2).split(",") if d.strip()]
+        ln = i + 1
+        sym = next((r for r in sym_ranges if r[1] <= ln <= r[2]), None)
+        if sym is None:
+            # 선언 블록은 심볼 '앞'에 오므로 바로 뒤 심볼도 후보로 본다
+            after = [r for r in sym_ranges if r[1] > ln]
+            sym = min(after, key=lambda r: r[1]) if after else None
+            if sym and sym[1] - ln > 14:      # 너무 멀면 남의 심볼이다
+                sym = None
+        unit_index[uid] = {
+            "file": rel, "line": ln, "designs": designs,
+            "symbol": sym[0] if sym else None,
+            "unit_key": sym[3] if sym else None,
+            "url": sym[4] if sym else
+                   "https://github.com/%s/blob/%s/%s#L%d" % (REPO, BRANCH, rel, ln),
+        }
+
+
+def collect_unit_tag(lines, start_1based, end_1based, floor_1based=1):
+    """`@unit` 선언 하나를 찾는다. (유닛 ID, [설계 ID]) 또는 None.
+
+    범위 규칙은 collect_req_tags 와 같다 — 앞 심볼 영역을 침범하지 않는다.
+    안 그러면 앞 함수의 선언을 뒤 함수 것으로 잡는다 (REVIEW.md D-7)."""
+    top = max(0, start_1based - 1 - 14, floor_1based - 1)
+    window = list(lines[top:start_1based - 1]) + list(lines[start_1based - 1:end_1based])
+    for line in window:
+        m = UNIT_TAG_RE.search(line)
+        if m:
+            designs = [d.strip() for d in m.group(2).split(",") if d.strip()]
+            return m.group(1), designs
+    return None
+
+
 # --------------------------------------------------------------------------- #
 def main():
     files = list_files()
@@ -214,6 +276,7 @@ def main():
 
     symbol_map = {}   # "src/x.c/func" -> url
     req_index = {}    # "SRS-AEB-305" -> [ {..} ]
+    unit_index = {}   # "SCS-AF-002" -> {symbol, file, designs}
     rows = []         # CODE_INDEX.md 용
 
     for src in files:
@@ -244,9 +307,13 @@ def main():
                     starts.append((m.group(2), i + 1))
 
         if not starts:
+            # 함수가 없어도 @unit 선언은 있을 수 있다 (헤더의 typedef 등)
+            scan_units(unit_index, rel, lines, [])
             print("[info] 심볼 없음: %s" % rel)
             continue
 
+        prev_end = 0
+        sym_ranges = []      # (심볼, 시작, 끝, key, url)
         for name, start in sorted(starts, key=lambda x: x[1]):
             if suf in PY_SUFFIXES:
                 end = indent_end(lines, start - 1)
@@ -257,7 +324,9 @@ def main():
             key = "%s/%s" % (rel, name)
             symbol_map[key] = url
 
-            tags = collect_req_tags(lines, start, end)
+            tags = collect_req_tags(lines, start, end, floor_1based=prev_end + 1)
+            sym_ranges.append((name, start, end, key, url))
+            prev_end = max(prev_end, end)
             for kind, rid in tags:
                 req_index.setdefault(rid, []).append({
                     "kind": kind,          # req | verifies | satisfies
@@ -277,18 +346,23 @@ def main():
             print("[ok] %-58s L%-4d-%-4d %s"
                   % (key, start, end, ",".join(rid for _, rid in tags) or "-"))
 
+        scan_units(unit_index, rel, lines, sym_ranges)
+
     # ---- 출력 ----
     (ROOT / "redirects_generated.json").write_text(
         json.dumps(symbol_map, ensure_ascii=False, indent=2), encoding="utf-8")
     (ROOT / "req_index.json").write_text(
         json.dumps(req_index, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    (ROOT / "unit_index.json").write_text(
+        json.dumps(unit_index, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8")
 
     gen_dir = ROOT / "docs" / "generated"
     gen_dir.mkdir(parents=True, exist_ok=True)
     (gen_dir / "CODE_INDEX.md").write_text(render_index(rows, req_index), encoding="utf-8")
 
-    print("\n[done] 심볼 %d개 / 요구사항 %d개 인덱싱"
-          % (len(symbol_map), len(req_index)))
+    print("\n[done] 심볼 %d개 / 요구사항 %d개 / 유닛 선언 %d개 인덱싱"
+          % (len(symbol_map), len(req_index), len(unit_index)))
     print("       redirects_generated.json, req_index.json, docs/generated/CODE_INDEX.md")
     return 0
 
