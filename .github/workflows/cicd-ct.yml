@@ -123,6 +123,10 @@ jobs:
       env:
         CB_URL: ${{ secrets.CB_URL }}
         CB_TOKEN: ${{ secrets.CB_TOKEN }}
+        # 이 코드비머에는 API 토큰 발급 기능이 없다 [실측: 프로필에 웹훅만 있음].
+        # 토큰이 비면 스크립트가 Basic 인증으로 넘어간다 — 그 자격증명을 여기로 넘긴다.
+        CB_USER: ${{ secrets.CB_USER }}
+        CB_PASS: ${{ secrets.CB_PASS }}
         CB_TEST_RUN_TRACKER_ID: ${{ secrets.CB_TEST_RUN_TRACKER_ID }}
         CB_TEST_CASE_TRACKER_ID: ${{ secrets.CB_TEST_CASE_TRACKER_ID }}
       run: |
