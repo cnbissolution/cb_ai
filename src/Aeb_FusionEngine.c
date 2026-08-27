@@ -1,5 +1,11 @@
 #include "Aeb_Interfaces.h"
 
+/**
+ * @brief 캘리브레이션 상수 — 차종별 조정 대상
+ *
+ * @unit SCS-AF-004 -> SDD-AEB-301
+ * @verified_by SCS-AF-003  제동 판단이 이 임계값을 쓴다. 경계값 시험이 값을 검증한다
+ */
 #define AEB_TTC_CRITICAL_SEC      (1.5F)
 #define AEB_TTC_SAFE_DEFAULT      (999.0F)
 #define AEB_PEDESTRIAN_WEIGHT     (0.8F)
@@ -10,6 +16,8 @@
 
 /**
  * @brief AEB 초기화 — 인터페이스 주입 및 안전 기본값 설정
+ *
+ * @unit SCS-AF-001 -> SDD-AEB-202, SDD-AEB-602, SDD-AEB-701
  *
  * @req SRS-AEB-101  레이더/카메라/제동 인터페이스 포인터 검증 및 할당
  * @req SRS-AEB-102  내부 결함 상태를 FALSE 로 설정
@@ -28,6 +36,8 @@ void Aeb_Init(Aeb_SystemContext* context, IRadarSensor* radar, ICameraSensor* ca
 
 /**
  * @brief 내부 TTC 계산 로직 (0으로 나누기 방어 적용)
+ *
+ * @unit SCS-AF-002 -> SDD-AEB-501, SDD-AEB-602, SDD-AEB-701
  *
  * @req SRS-AEB-302  유효하고 -0.5 km/h 미만으로 접근하는 타겟만 계산
  * @req SRS-AEB-303  TTC = 거리(m) / 상대속도(m/s)
@@ -56,6 +66,8 @@ static float32 CalculateTTC(const TargetObject* target)
 
 /**
  * @brief 10ms 주기 메인 제어 루프
+ *
+ * @unit SCS-AF-003 -> SDD-AEB-502, SDD-AEB-601, SDD-AEB-602, SDD-AEB-701
  *
  * @req SRS-AEB-201  10ms 주기 실행 (OS 스케줄러가 호출)
  * @req SRS-AEB-202  매 주기 센서 상태 확인
